@@ -1,0 +1,393 @@
+# Metro App - Complete Implementation Plan
+
+A multi-modal transportation app for Android built with Flutter, featuring Supabase authentication, city-based transport maps, and trip history tracking.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Missing Login Page**: The existing project is a fresh Flutter template. The login page mentioned as "done with Supabase" does not exist yet. This plan includes building it from scratch.
+
+> [!CAUTION]
+> **Assets Required**: The developer must provide/create the following image assets before the app can be fully functional. See the complete asset list below.
+
+---
+
+## Required Dependencies
+
+Add to [pubspec.yaml](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/pubspec.yaml):
+```yaml
+dependencies:
+  supabase_flutter: ^2.3.0      # Authentication
+  geolocator: ^10.1.0           # Location auto-detect
+  geocoding: ^2.1.1             # Reverse geocoding for city detection
+  provider: ^6.1.1              # State management
+  csv: ^5.1.1                   # CSV file handling for trip history
+  path_provider: ^2.1.2         # Local file storage
+  photo_view: ^0.14.0           # Zoomable map images
+  url_launcher: ^6.2.4          # Google Forms link
+  shared_preferences: ^2.2.2    # Theme persistence
+  google_fonts: ^6.1.0          # Modern typography
+```
+
+---
+
+## Required Assets
+
+All assets must be placed in the Flutter project's [assets/](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/ios/Runner/Assets.xcassets) directory.
+
+### Directory Structure
+```
+assets/
+├── images/
+│   ├── transport/
+│   │   ├── metro_banner.png       # Metro start button background
+│   │   ├── bus_banner.png         # Bus start button background
+│   │   ├── train_banner.png       # Train start button background
+│   │   ├── rickshaw_banner.png    # Rickshaw start button background
+│   │   ├── metro_icon.png         # Metro bottom nav icon
+│   │   ├── bus_icon.png           # Bus bottom nav icon
+│   │   ├── train_icon.png         # Train bottom nav icon
+│   │   └── rickshaw_icon.png      # Rickshaw bottom nav icon
+│   │
+│   └── maps/
+│       ├── mumbai/
+│       │   ├── metro_map.png      # Mumbai Metro route map
+│       │   ├── bus_map.png        # Mumbai Bus route map
+│       │   ├── train_map.png      # Mumbai Train route map
+│       │   └── rickshaw_map.png   # Mumbai Rickshaw coverage map
+│       ├── delhi/
+│       │   ├── metro_map.png
+│       │   ├── bus_map.png
+│       │   ├── train_map.png
+│       │   └── rickshaw_map.png
+│       ├── kolkata/
+│       │   ├── metro_map.png
+│       │   ├── bus_map.png
+│       │   ├── train_map.png
+│       │   └── rickshaw_map.png
+│       ├── bengaluru/
+│       │   ├── metro_map.png
+│       │   ├── bus_map.png
+│       │   ├── train_map.png
+│       │   └── rickshaw_map.png
+│       ├── hyderabad/
+│       │   ├── metro_map.png
+│       │   ├── bus_map.png
+│       │   ├── train_map.png
+│       │   └── rickshaw_map.png
+│       ├── chennai/
+│       │   ├── metro_map.png
+│       │   ├── bus_map.png
+│       │   ├── train_map.png
+│       │   └── rickshaw_map.png
+│       ├── ahmedabad/
+│       │   ├── metro_map.png
+│       │   ├── bus_map.png
+│       │   ├── train_map.png
+│       │   └── rickshaw_map.png
+│       └── pune/
+│           ├── metro_map.png
+│           ├── bus_map.png
+│           ├── train_map.png
+│           └── rickshaw_map.png
+│
+└── data/
+    └── (trip_history.csv will be created at runtime in app documents directory)
+```
+
+### Asset Requirements Summary
+
+| Asset Path | Type | Description | Recommended Size |
+|------------|------|-------------|------------------|
+| `images/transport/metro_banner.png` | PNG | Metro train image for start button background | 800x400px |
+| `images/transport/bus_banner.png` | PNG | Bus image for start button background | 800x400px |
+| `images/transport/train_banner.png` | PNG | Train image for start button background | 800x400px |
+| `images/transport/rickshaw_banner.png` | PNG | Auto rickshaw image for start button background | 800x400px |
+| `images/transport/metro_icon.png` | PNG | Metro icon for bottom nav (pill-shaped) | 48x48px |
+| `images/transport/bus_icon.png` | PNG | Bus icon for bottom nav (pill-shaped) | 48x48px |
+| `images/transport/train_icon.png` | PNG | Train icon for bottom nav (pill-shaped) | 48x48px |
+| `images/transport/rickshaw_icon.png` | PNG | Rickshaw icon for bottom nav (pill-shaped) | 48x48px |
+| `images/maps/{city}/metro_map.png` | PNG | Metro route map for each city | 2000x2000px (zoomable) |
+| `images/maps/{city}/bus_map.png` | PNG | Bus route map for each city | 2000x2000px (zoomable) |
+| `images/maps/{city}/train_map.png` | PNG | Train route map for each city | 2000x2000px (zoomable) |
+| `images/maps/{city}/rickshaw_map.png` | PNG | Rickshaw coverage map for each city | 2000x2000px (zoomable) |
+
+> **Total Assets Needed**: 8 transport images + 32 map images (8 cities × 4 transport types) = **40 image assets**
+
+---
+
+## Proposed Changes
+
+### Project Configuration
+
+#### [MODIFY] [pubspec.yaml](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/pubspec.yaml)
+- Add all required dependencies (Supabase, geolocator, provider, csv, photo_view, etc.)
+- Configure assets directory in flutter section
+- Add Google Fonts dependency
+
+---
+
+### Core Infrastructure
+
+#### [NEW] [lib/core/constants/app_colors.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/core/constants/app_colors.dart)
+- Define light blue primary color (#64B5F6)
+- Define off-white background color (#FAFAFA)
+- Define accent colors and text colors
+- Light and dark theme color palettes
+
+#### [NEW] [lib/core/constants/app_theme.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/core/constants/app_theme.dart)
+- Create light theme with light blue + off-white
+- Create dark theme variant
+- Configure pill-shaped rounded button styles
+- Apply modern typography with Google Fonts
+
+#### [NEW] [lib/core/constants/cities.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/core/constants/cities.dart)
+- List of supported cities with coordinates for auto-detection
+- City enum with Mumbai, Delhi, Kolkata, Bengaluru, Hyderabad, Chennai, Ahmedabad, Pune
+
+---
+
+### Data Models
+
+#### [NEW] [lib/models/transport_mode.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/models/transport_mode.dart)
+- TransportMode enum: metro, bus, train, rickshaw
+- Helper methods for icons, labels, and asset paths
+
+#### [NEW] [lib/models/trip.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/models/trip.dart)
+- Trip model with: id, transportMode, city, startStation, endStation, date, fare
+- CSV serialization/deserialization methods
+
+#### [NEW] [lib/models/user_profile.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/models/user_profile.dart)
+- UserProfile model from Supabase user data
+- Fields: id, email, name, phone, profileImageUrl
+
+---
+
+### Services
+
+#### [NEW] [lib/services/auth_service.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/services/auth_service.dart)
+- Supabase authentication wrapper
+- Login, signup, logout methods
+- Auth state stream
+
+#### [NEW] [lib/services/location_service.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/services/location_service.dart)
+- Get current location using geolocator
+- Auto-detect city from coordinates using reverse geocoding
+- Match to nearest supported city
+
+#### [NEW] [lib/services/trip_history_service.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/services/trip_history_service.dart)
+- Read/write trip history to local CSV file
+- Filter trips by transport mode
+- Get last N trips for display
+
+#### [NEW] [lib/services/theme_service.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/services/theme_service.dart)
+- Persist theme preference using SharedPreferences
+- Toggle between light and dark themes
+
+---
+
+### State Management (Providers)
+
+#### [NEW] [lib/providers/app_state_provider.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/providers/app_state_provider.dart)
+- Selected city state
+- Selected transport mode state
+- Theme mode state
+
+#### [NEW] [lib/providers/auth_provider.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/providers/auth_provider.dart)
+- Current user state
+- Authentication status
+
+#### [NEW] [lib/providers/trip_provider.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/providers/trip_provider.dart)
+- Trip history state
+- Add/load trip operations
+
+---
+
+### Screens
+
+#### [NEW] [lib/screens/login_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/login_screen.dart)
+- Supabase email/password login
+- Sign up option
+- Modern UI with light blue + off-white theme
+
+#### [NEW] [lib/screens/home_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/home_screen.dart)
+- Main home page with all features:
+  - App bar with city dropdown + auto-detect
+  - Start button with transport-specific background
+  - Last trips section
+  - Zoomable map section
+  - Bottom navigation for transport modes
+
+#### [NEW] [lib/screens/metro_route_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/metro_route_screen.dart)
+- Metro route selection interface
+- Start/end station pickers
+- Route planning
+
+#### [NEW] [lib/screens/bus_route_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/bus_route_screen.dart)
+- Bus route selection interface
+
+#### [NEW] [lib/screens/train_route_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/train_route_screen.dart)
+- Train route selection interface
+
+#### [NEW] [lib/screens/rickshaw_route_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/rickshaw_route_screen.dart)
+- Rickshaw/auto route selection interface
+
+#### [NEW] [lib/screens/history_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/history_screen.dart)
+- Full trip history with tabs for each transport mode
+- Read from local CSV file
+
+#### [NEW] [lib/screens/feedback_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/feedback_screen.dart)
+- Embedded Google Form link (placeholder)
+- Open form in browser
+
+#### [NEW] [lib/screens/about_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/about_screen.dart)
+- About Us page (placeholder for content)
+
+#### [NEW] [lib/screens/settings_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/settings_screen.dart)
+- Theme toggle switch (light/dark mode)
+
+#### [NEW] [lib/screens/profile_screen.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/screens/profile_screen.dart)
+- User profile display
+- Profile image, name, email, phone
+- Logout button at bottom
+
+---
+
+### Widgets (Reusable Components)
+
+#### [NEW] [lib/widgets/city_dropdown.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/widgets/city_dropdown.dart)
+- City selection dropdown with auto-detect option
+- Pill-shaped styling
+
+#### [NEW] [lib/widgets/transport_bottom_nav.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/widgets/transport_bottom_nav.dart)
+- Bottom navigation bar with 4 transport modes
+- Pill-shaped rounded icons
+
+#### [NEW] [lib/widgets/start_button.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/widgets/start_button.dart)
+- Large start button with transport image background
+- Covers half the page height
+
+#### [NEW] [lib/widgets/last_trips_card.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/widgets/last_trips_card.dart)
+- Card displaying last trips
+- Shows "Start a trip to show history" if empty
+
+#### [NEW] [lib/widgets/zoomable_map.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/widgets/zoomable_map.dart)
+- PhotoView wrapper for map images
+- Changes based on city and transport mode
+
+#### [NEW] [lib/widgets/app_drawer.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/widgets/app_drawer.dart)
+- Sidebar navigation drawer
+- Home, History, Feedback, About Us, Settings
+- Profile at bottom
+
+---
+
+### Main App Entry
+
+#### [MODIFY] [main.dart](file:///mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2/lib/main.dart)
+- Initialize Supabase
+- Set up providers
+- Configure routing
+- Apply theme
+
+---
+
+## Directory Structure After Implementation
+
+```
+lib/
+├── main.dart
+├── core/
+│   └── constants/
+│       ├── app_colors.dart
+│       ├── app_theme.dart
+│       └── cities.dart
+├── models/
+│   ├── transport_mode.dart
+│   ├── trip.dart
+│   └── user_profile.dart
+├── services/
+│   ├── auth_service.dart
+│   ├── location_service.dart
+│   ├── trip_history_service.dart
+│   └── theme_service.dart
+├── providers/
+│   ├── app_state_provider.dart
+│   ├── auth_provider.dart
+│   └── trip_provider.dart
+├── screens/
+│   ├── login_screen.dart
+│   ├── home_screen.dart
+│   ├── metro_route_screen.dart
+│   ├── bus_route_screen.dart
+│   ├── train_route_screen.dart
+│   ├── rickshaw_route_screen.dart
+│   ├── history_screen.dart
+│   ├── feedback_screen.dart
+│   ├── about_screen.dart
+│   ├── settings_screen.dart
+│   └── profile_screen.dart
+└── widgets/
+    ├── city_dropdown.dart
+    ├── transport_bottom_nav.dart
+    ├── start_button.dart
+    ├── last_trips_card.dart
+    ├── zoomable_map.dart
+    └── app_drawer.dart
+```
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+**Unit Tests** - Run with `flutter test`:
+```bash
+flutter test test/services/trip_history_service_test.dart
+flutter test test/models/trip_test.dart
+```
+
+### Manual Verification
+
+1. **Build & Run on Android Emulator**:
+   ```bash
+   cd /mnt/windows/Users/swarn/UNENDLESS/Projects/metroapp_2
+   flutter run
+   ```
+
+2. **Login Flow Verification**:
+   - Open app → Login screen should appear
+   - Enter test credentials → Should navigate to Home
+   - Close and reopen → Should remain logged in
+
+3. **Home Page Verification**:
+   - City dropdown shows all 8 cities
+   - Auto-detect location works (requires location permission)
+   - Bottom nav switches transport modes
+   - Start button background image changes per mode
+   - Map image changes per city and mode
+
+4. **Navigation Verification**:
+   - Start button → Opens correct route screen
+   - Sidebar → All options navigate correctly
+   - History → Shows filtered trips
+   - Settings → Theme toggle works
+
+5. **Theme Verification**:
+   - Toggle dark mode in settings
+   - App restarts with theme persisted
+
+---
+
+## Questions for User
+
+1. **Supabase Configuration**: Please provide your Supabase project URL and anon key for authentication setup.
+
+2. **Google Form Link**: What is the Google Form URL for the feedback page?
+
+3. **About Us Content**: What content should be displayed on the About Us page?
+
+4. **Route Selection Details**: You mentioned route selection pages will be described in detail later. Should I implement placeholder screens for now?
+
+5. **Trip History CSV Format**: Should trips store additional data like fare, duration, or specific route taken?

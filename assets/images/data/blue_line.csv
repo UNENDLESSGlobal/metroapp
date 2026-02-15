@@ -1,0 +1,26 @@
+Source,Destination,Line,Time,Fare
+Dakshineswar,Baranagar,Blue Line,3,5
+Baranagar,Noapara,Blue Line,3,5
+Noapara,Dum Dum,Blue Line,3,5
+Dum Dum,Belgachia,Blue Line,4,5
+Belgachia,Shyambazar,Blue Line,3,5
+Shyambazar,Shobhabazar Sutanuti,Blue Line,3,5
+Shobhabazar Sutanuti,Girish Park,Blue Line,3,5
+Girish Park,Mahatma Gandhi Road,Blue Line,3,5
+Mahatma Gandhi Road,Central,Blue Line,3,5
+Central,Chandni Chowk,Blue Line,2,5
+Chandni Chowk,Esplanade,Blue Line,2,5
+Esplanade,Park Street,Blue Line,2,5
+Park Street,Maidan,Blue Line,2,5
+Maidan,Rabindra Sadan,Blue Line,3,5
+Rabindra Sadan,Netaji Bhavan,Blue Line,2,5
+Netaji Bhavan,Jatin Das Park,Blue Line,2,5
+Jatin Das Park,Kalighat,Blue Line,3,5
+Kalighat,Rabindra Sarobar,Blue Line,3,5
+Rabindra Sarobar,Mahanayak Uttam Kumar,Blue Line,3,5
+Mahanayak Uttam Kumar,Netaji,Blue Line,3,5
+Netaji,Masterda Surya Sen,Blue Line,3,5
+Masterda Surya Sen,Gitanjali,Blue Line,3,5
+Gitanjali,Kavi Nazrul,Blue Line,3,5
+Kavi Nazrul,Shahid Khudiram,Blue Line,3,5
+Shahid Khudiram,Kavi Subhash,Blue Line,3,5

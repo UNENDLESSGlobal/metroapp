@@ -1,0 +1,86 @@
+# -----------------------
+# Miscellaneous
+# -----------------------
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.buildlog/
+.history
+.svn/
+migrate_working_dir/
+structure.txt
+
+# -----------------------
+# IntelliJ / Android Studio
+# -----------------------
+*.iml
+*.ipr
+*.iws
+.idea/
+# Ignore the specific project iml file seen in your structure
+metroapp_2.iml
+metroapp_2_android.iml
+
+# -----------------------
+# VS Code
+# -----------------------
+.vscode/
+
+# -----------------------
+# Flutter / Dart
+# -----------------------
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+app.*.map.json
+
+# -----------------------
+# Android
+# -----------------------
+# Gradle cache & build artifacts (The major culprits for your large file error)
+.gradle/
+.gradle_home/
+android/.gradle/
+android/app/build/
+android/app/releases/
+android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+
+# Local configuration file (contains secrets/paths)
+android/local.properties
+android/key.properties
+
+# -----------------------
+# iOS / macOS
+# -----------------------
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# Xcode user settings (personal to your machine)
+**/xcuserdata/
+*.xcworkspace
+!default.xcworkspace
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+
+# -----------------------
+# Desktop (Linux/Windows/Mac)
+# -----------------------
+linux/flutter/ephemeral/
+windows/flutter/ephemeral/
+macos/Flutter/ephemeral/
