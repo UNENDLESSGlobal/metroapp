@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import '../models/transport_mode.dart';
-import '../models/trip.dart';
-import '../providers/app_state_provider.dart';
-import '../providers/trip_provider.dart';
-import '../core/constants/app_colors.dart';
+import '../models/bus_model.dart';
+import '../services/bus_service.dart';
+import 'bus_tracking_screen.dart';
 
-/// Bus route selection screen
 class BusRouteScreen extends StatefulWidget {
   const BusRouteScreen({super.key});
 
@@ -15,231 +11,347 @@ class BusRouteScreen extends StatefulWidget {
 }
 
 class _BusRouteScreenState extends State<BusRouteScreen> {
-  String? _startStop;
-  String? _endStop;
-  bool _isLoading = false;
+  final BusService _busService = BusService();
+  bool _isLoading = true;
+  List<String> _stopNames = [];
+  
+  // Selection
+  String? _fromStop;
+  String? _toStop;
+  
+  // Results
+  List<BusRoute> _foundRoutes = [];
+  bool _hasSearched = false;
 
-  // Sample bus stops
-  final List<String> _stops = [
-    'Bus Terminal',
-    'Market Square',
-    'School Road',
-    'Hospital Gate',
-    'Park Avenue',
-    'Shopping Mall',
-    'College Campus',
-    'Industrial Area',
-    'Residential Complex',
-    'Stadium',
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadBusData();
+  }
 
-  Future<void> _startTrip() async {
-    if (_startStop == null || _endStop == null) {
+  Future<void> _loadBusData() async {
+    await _busService.loadData();
+    setState(() {
+      _stopNames = _busService.getAllStopNames();
+      _isLoading = false;
+    });
+  }
+
+  void _searchRoutes() {
+    if (_fromStop == null || _toStop == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select start and end stops'),
-          backgroundColor: Colors.orange,
-        ),
+        const SnackBar(content: Text('Please select both source and destination')),
       );
       return;
     }
-
-    setState(() => _isLoading = true);
-
-    try {
-      final appState = context.read<AppStateProvider>();
-      final tripProvider = context.read<TripProvider>();
-
-      final trip = Trip(
-        id: Trip.generateId(),
-        transportMode: TransportMode.bus,
-        city: appState.selectedCity.name,
-        startStation: _startStop!,
-        endStation: _endStop!,
-        date: DateTime.now(),
-        fare: 15.0,
-        durationMinutes: 25,
-      );
-
-      await tripProvider.addTrip(trip);
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Bus trip started successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.pop(context);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+    
+    setState(() {
+      _foundRoutes = _busService.findRoutes(_fromStop!, _toStop!);
+      _hasSearched = true;
+    });
+  }
+  
+  void _swapStops() {
+    setState(() {
+      final temp = _fromStop;
+      _fromStop = _toStop;
+      _toStop = temp;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Bus Route'),
-        backgroundColor: AppColors.busColor,
+        title: const Text('Bus Routes'),
+        backgroundColor: Theme.of(context).colorScheme.primary,
         foregroundColor: Colors.white,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    AppColors.busColor.withValues(alpha: 0.8),
-                    AppColors.busColor,
-                  ],
+      body: _isLoading 
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                _buildSearchSection(),
+                Expanded(child: _buildResultsList()),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildSearchSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            offset: const Offset(0, 4),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+           // From field
+          Autocomplete<String>(
+            optionsBuilder: (TextEditingValue textEditingValue) {
+              if (textEditingValue.text == '') {
+                return const Iterable<String>.empty();
+              }
+              return _stopNames.where((String option) {
+                return option.toLowerCase().contains(textEditingValue.text.toLowerCase());
+              });
+            },
+            onSelected: (String selection) {
+              setState(() => _fromStop = selection);
+            },
+            fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+              if (_fromStop != null && controller.text != _fromStop) {
+                  controller.text = _fromStop!;
+              }
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: InputDecoration(
+                  labelText: 'From',
+                  prefixIcon: const Icon(Icons.my_location),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                borderRadius: BorderRadius.circular(20),
+              );
+            },
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // Swap button
+          Align(
+            alignment: Alignment.centerRight,
+            child: IconButton(
+              onPressed: _swapStops,
+              icon: const Icon(Icons.swap_vert_circle, size: 32),
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          
+          const SizedBox(height: 4),
+
+          // To field
+          Autocomplete<String>(
+            optionsBuilder: (TextEditingValue textEditingValue) {
+               if (textEditingValue.text == '') {
+                return const Iterable<String>.empty();
+              }
+              return _stopNames.where((String option) {
+                return option.toLowerCase().contains(textEditingValue.text.toLowerCase());
+              });
+            },
+             onSelected: (String selection) {
+              setState(() => _toStop = selection);
+            },
+             fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+               if (_toStop != null && controller.text != _toStop) {
+                  controller.text = _toStop!;
+              }
+              return TextField(
+                controller: controller,
+                focusNode: focusNode,
+                decoration: InputDecoration(
+                  labelText: 'To',
+                  prefixIcon: const Icon(Icons.location_on),
+                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              );
+            },
+          ),
+          
+          const SizedBox(height: 20),
+          
+          ElevatedButton(
+            onPressed: _searchRoutes,
+            style: ElevatedButton.styleFrom(
+               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+               padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+            child: const Text('Find Routes', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAllRoutes() {
+    final allRoutes = _busService.getAllUniqueRoutes();
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Column(
+        children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('All Available Buses', style: Theme.of(context).textTheme.headlineSmall),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: allRoutes.length,
+                itemBuilder: (context, index) {
+                    final route = allRoutes[index];
+                    return ListTile(
+                        leading: const Icon(Icons.directions_bus, color: Colors.blue),
+                        title: Text('Bus ${route.routeNo}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text(route.busType),
+                    );
+                },
               ),
-              child: const Row(
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResultsList() {
+    List<Widget> children = [];
+
+    // 1. Initial State or Empty State
+    if (!_hasSearched) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.directions_bus_outlined, size: 64, color: Colors.grey.shade400),
+              const SizedBox(height: 16),
+              Text(
+                'Enter stops to find bus routes',
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      );
+    } else if (_foundRoutes.isEmpty) {
+      children.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.bus_alert, size: 64, color: Colors.grey.shade400),
+              const SizedBox(height: 16),
+              Text(
+                'No direct routes found.',
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+      );
+    } else {
+      // 2. Results List
+      children.addAll(_foundRoutes.map((route) {
+        final isAC = route.busType.toUpperCase().contains('AC') && !route.busType.toUpperCase().contains('NON-AC');
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          elevation: 3,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: () {
+               Navigator.push(
+                context, 
+                MaterialPageRoute(
+                  builder: (context) => BusTrackingScreen(route: route, destinationStop: _toStop!),
+                ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
                 children: [
-                  Icon(Icons.directions_bus, size: 48, color: Colors.white),
-                  SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Plan Your Bus Trip',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Select your boarding and drop-off points',
-                          style: TextStyle(color: Colors.white70),
-                        ),
-                      ],
+                   Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: isAC ? Colors.blue.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.directions_bus, 
+                      color: isAC ? Colors.blue : Colors.orange,
+                      size: 28,
+                    ),
+                   ),
+                   const SizedBox(width: 16),
+                   Expanded(
+                     child: Column(
+                       crossAxisAlignment: CrossAxisAlignment.start,
+                       children: [
+                         Text(
+                           'Bus ${route.routeNo}', 
+                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                         ),
+                         const SizedBox(height: 4),
+                         Text(
+                           route.busType,
+                           style: TextStyle(
+                             color: isAC ? Colors.blue : Colors.orange.shade800,
+                             fontWeight: FontWeight.w600,
+                             fontSize: 12
+                           ),
+                         ),
+                       ],
+                     ),
+                   ),
+                   const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                ],
+              ),
+            ),
+          ),
+        );
+      }));
+    }
+
+    // 3. "View All Buses" Card (Always visible at the bottom)
+    if (!_hasSearched) {
+      children.add(
+        Card(
+          margin: const EdgeInsets.only(top: 10, bottom: 20),
+          elevation: 2,
+          color: Colors.grey.shade100,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.grey.shade300)),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: _showAllRoutes,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.list, color: Theme.of(context).primaryColor),
+                  const SizedBox(width: 12),
+                  Text(
+                    'View All Buses',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).primaryColor,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 24),
-
-            _buildStopSelector(
-              label: 'Boarding Point',
-              icon: Icons.trip_origin,
-              value: _startStop,
-              onChanged: (v) => setState(() => _startStop = v),
-            ),
-            const SizedBox(height: 16),
-            Center(
-              child: IconButton(
-                onPressed: () {
-                  setState(() {
-                    final temp = _startStop;
-                    _startStop = _endStop;
-                    _endStop = temp;
-                  });
-                },
-                icon: const Icon(Icons.swap_vert),
-                style: IconButton.styleFrom(
-                  backgroundColor: AppColors.busColor.withValues(alpha: 0.1),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildStopSelector(
-              label: 'Drop-off Point',
-              icon: Icons.location_on,
-              value: _endStop,
-              onChanged: (v) => setState(() => _endStop = v),
-            ),
-            const SizedBox(height: 32),
-
-            ElevatedButton(
-              onPressed: _isLoading ? null : _startTrip,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.busColor,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
-              ),
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Text(
-                      'Start Trip',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                    ),
-            ),
-          ],
+          ),
         ),
-      ),
-    );
-  }
+      );
+    }
 
-  Widget _buildStopSelector({
-    required String label,
-    required IconData icon,
-    required String? value,
-    required ValueChanged<String?> onChanged,
-  }) {
-    return Container(
+    return ListView(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: AppColors.busColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: AppColors.busColor),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-                DropdownButtonHideUnderline(
-                  child: DropdownButton<String>(
-                    value: value,
-                    hint: const Text('Select stop'),
-                    isExpanded: true,
-                    items: _stops.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-                    onChanged: onChanged,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+      children: children,
     );
   }
 }

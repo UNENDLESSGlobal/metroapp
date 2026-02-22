@@ -12,14 +12,13 @@ void main() {
       metroService = MetroService();
     });
 
-    test('calculate route simple', () {
-      const String csvData = '''Station1,Station2,Line,Time,Fare
-A,B,Blue,5,10
-B,C,Blue,5,10
-C,D,Green,5,10
-D,E,Green,5,10''';
-      
-      metroService.parseCsv(csvData);
+    test('calculate route simple (JSON data)', () {
+      metroService.parseJsonData([
+        {'Station1': 'A', 'Station2': 'B', 'Line': 'Blue', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+        {'Station1': 'B', 'Station2': 'C', 'Line': 'Blue', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+        {'Station1': 'C', 'Station2': 'D', 'Line': 'Green', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+        {'Station1': 'D', 'Station2': 'E', 'Line': 'Green', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+      ]);
       
       final route = metroService.findRoute('A', 'C');
       expect(route, isNotNull);
@@ -29,23 +28,14 @@ D,E,Green,5,10''';
     });
 
     test('calculate route across lines (interchange)', () {
-       // Mock data representing two lines meeting at 'B'
-       const String blueLineChunk = '''Station1,Station2,Line,Time,Fare
-A,B,Blue,5,10
-B,C,Blue,5,10''';
-       
-       const String greenLineChunk = '''Station1,Station2,Line,Time,Fare
-X,B,Green,5,10
-B,Y,Green,5,10''';
-      
-      // Simulate loading multiple files by calling parseCsv twice
-      metroService.parseCsv(blueLineChunk);
-      metroService.parseCsv(greenLineChunk);
+      metroService.parseJsonData([
+        {'Station1': 'A', 'Station2': 'B', 'Line': 'Blue', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+        {'Station1': 'B', 'Station2': 'C', 'Line': 'Blue', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+        {'Station1': 'X', 'Station2': 'B', 'Line': 'Green', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+        {'Station1': 'B', 'Station2': 'Y', 'Line': 'Green', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+      ]);
       
       // Path: A(Blue) -> B(Blue/Green) -> Y(Green)
-      // Total nodes: 3
-      // Total time: 5 (A->B) + 5 (B->Y) = 10
-      
       final route = metroService.findRoute('A', 'Y');
       expect(route, isNotNull);
       expect(route!.totalTime, 10);
@@ -56,16 +46,12 @@ B,Y,Green,5,10''';
     });
     
     test('calculate route Blue -> Yellow (via Noapara)', () {
-       const String blueLineChunk = '''Station1,Station2,Line,Time,Fare
-Dakshineswar,Baranagar,Blue,3,5
-Baranagar,Noapara,Blue,3,5''';
-       
-       const String yellowLineChunk = '''Station1,Station2,Line,Time,Fare
-Noapara,Dum Dum Cantt,Yellow,4,5
-Dum Dum Cantt,Jessore Road,Yellow,3,5''';
-      
-      metroService.parseCsv(blueLineChunk);
-      metroService.parseCsv(yellowLineChunk);
+      metroService.parseJsonData([
+        {'Station1': 'Dakshineswar', 'Station2': 'Baranagar', 'Line': 'Blue', 'Time': 3, 'Fare': 5, 'Is_Operational': true},
+        {'Station1': 'Baranagar', 'Station2': 'Noapara', 'Line': 'Blue', 'Time': 3, 'Fare': 5, 'Is_Operational': true},
+        {'Station1': 'Noapara', 'Station2': 'Dum Dum Cantt', 'Line': 'Yellow', 'Time': 4, 'Fare': 5, 'Is_Operational': true},
+        {'Station1': 'Dum Dum Cantt', 'Station2': 'Jessore Road', 'Line': 'Yellow', 'Time': 3, 'Fare': 5, 'Is_Operational': true},
+      ]);
       
       final route = metroService.findRoute('Dakshineswar', 'Dum Dum Cantt');
       expect(route, isNotNull);
@@ -76,15 +62,11 @@ Dum Dum Cantt,Jessore Road,Yellow,3,5''';
     });
 
     test('calculate route Orange -> Yellow (via Airport)', () {
-       const String orangeLineChunk = '''Station1,Station2,Line,Time,Fare
-City Center 2,Jai Hind (Airport),Orange,4,5''';
-       
-       const String yellowLineChunk = '''Station1,Station2,Line,Time,Fare
-Jessore Road,Jai Hind (Airport),Yellow,3,5
-Jai Hind (Airport),Birati,Yellow,4,5''';
-      
-      metroService.parseCsv(orangeLineChunk);
-      metroService.parseCsv(yellowLineChunk);
+      metroService.parseJsonData([
+        {'Station1': 'City Center 2', 'Station2': 'Jai Hind (Airport)', 'Line': 'Orange', 'Time': 4, 'Fare': 5, 'Is_Operational': true},
+        {'Station1': 'Jessore Road', 'Station2': 'Jai Hind (Airport)', 'Line': 'Yellow', 'Time': 3, 'Fare': 5, 'Is_Operational': true},
+        {'Station1': 'Jai Hind (Airport)', 'Station2': 'Birati', 'Line': 'Yellow', 'Time': 4, 'Fare': 5, 'Is_Operational': true},
+      ]);
       
       final route = metroService.findRoute('City Center 2', 'Birati');
       expect(route, isNotNull);
@@ -92,6 +74,31 @@ Jai Hind (Airport),Birati,Yellow,4,5''';
       // Time: 4 + 4 = 8
       expect(route!.totalTime, 8);
       expect(route.interchangeStations, contains('Jai Hind (Airport)'));
+    });
+
+    test('non-operational edge is excluded from routing', () {
+      metroService.parseJsonData([
+        {'Station1': 'A', 'Station2': 'B', 'Line': 'Blue', 'Time': 5, 'Fare': 10, 'Is_Operational': true},
+        {'Station1': 'B', 'Station2': 'C', 'Line': 'Blue', 'Time': 5, 'Fare': 10, 'Is_Operational': false}, // DISABLED
+        {'Station1': 'A', 'Station2': 'D', 'Line': 'Green', 'Time': 3, 'Fare': 8, 'Is_Operational': true},
+        {'Station1': 'D', 'Station2': 'C', 'Line': 'Green', 'Time': 4, 'Fare': 8, 'Is_Operational': true},
+      ]);
+
+      // Direct B->C is disabled, should route via A->D->C
+      final route = metroService.findRoute('A', 'C');
+      expect(route, isNotNull);
+      expect(route!.totalTime, 7); // 3 + 4 via Green line
+      expect(route.segments.length, 3); // A -> D -> C
+    });
+
+    test('all paths disabled returns null', () {
+      metroService.parseJsonData([
+        {'Station1': 'A', 'Station2': 'B', 'Line': 'Blue', 'Time': 5, 'Fare': 10, 'Is_Operational': false},
+        {'Station1': 'B', 'Station2': 'C', 'Line': 'Blue', 'Time': 5, 'Fare': 10, 'Is_Operational': false},
+      ]);
+
+      final route = metroService.findRoute('A', 'C');
+      expect(route, isNull); // No route available
     });
   });
 }

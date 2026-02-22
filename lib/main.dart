@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Core
 import 'core/constants/app_theme.dart';
 
 // Services
 import 'services/auth_service.dart';
+import 'services/metro_service.dart';
 
 // Providers
 import 'providers/app_state_provider.dart';
@@ -27,9 +29,9 @@ import 'screens/about_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/profile_screen.dart';
 
-// TODO: Replace with your Supabase credentials
-const String supabaseUrl = 'https://sabpglebxoncdaiwdiwv.supabase.co';
-const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNhYnBnbGVieG9uY2RhaXdkaXd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAzNjAyNjQsImV4cCI6MjA4NTkzNjI2NH0.U9wqHfRoKS4DH-eZkbnUAbnkpt9UUyKL7-psjMYZus4';
+// Supabase credentials
+const String supabaseUrl = 'https://gqakrauxcwxpkqawvuul.supabase.co';
+const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdxYWtyYXV4Y3d4cGtxYXd2dXVsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE2NTU5MzAsImV4cCI6MjA4NzIzMTkzMH0.5ETItyGK4CpbC-cS4A3ac45mknl9jK_wMOHDoj-PwIA';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +41,16 @@ void main() async {
     url: supabaseUrl,
     anonKey: supabaseAnonKey,
   );
+  
+  // Initialize shared preferences
+  await SharedPreferences.getInstance();
+  
+  // Trigger metro data sync (non-blocking)
+  MetroService().syncMetroData().then((_) {
+    debugPrint('MetroService: Initial data sync complete');
+  }).catchError((e) {
+    debugPrint('MetroService: Initial sync failed: $e');
+  });
   
   runApp(const MetroApp());
 }

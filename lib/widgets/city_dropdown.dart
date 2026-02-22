@@ -139,7 +139,7 @@ class _CityDropdownState extends State<CityDropdown> {
                         ),
                       const SizedBox(width: 12),
                       Text(
-                        'Detect Current Location',
+                        'Auto Detect',
                         style: TextStyle(
                           color: theme.colorScheme.primary,
                           fontWeight: FontWeight.w600,

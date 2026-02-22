@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/constants/app_colors.dart';
 
 /// About Us screen with placeholder content
@@ -161,7 +162,7 @@ class AboutScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
+                   Text(
                     'Contact',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                           fontWeight: FontWeight.bold,
@@ -169,7 +170,7 @@ class AboutScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    'Developed by Cynocyte',
+                    'Made by Cynocyte under UNENDLESS',
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
@@ -180,12 +181,31 @@ class AboutScreen extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 4),
-                  SelectableText(
-                    'cynocyte@gmail.com',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w500,
-                        ),
+                  InkWell(
+                    onTap: () async {
+                      final Uri emailLaunchUri = Uri(
+                        scheme: 'mailto',
+                        path: 'cynocyte@gmail.com',
+                        queryParameters: {
+                          'subject': 'Metro App Support',
+                        },
+                      );
+                      try {
+                        if (await canLaunchUrl(emailLaunchUri)) {
+                          await launchUrl(emailLaunchUri);
+                        }
+                      } catch (e) {
+                        debugPrint(e.toString());
+                      }
+                    },
+                    child: Text(
+                      'cynocyte@gmail.com',
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w500,
+                            decoration: TextDecoration.underline,
+                          ),
+                    ),
                   ),
                 ],
               ),

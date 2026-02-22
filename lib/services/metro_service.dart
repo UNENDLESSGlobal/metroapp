@@ -1,7 +1,16 @@
 import 'dart:collection';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:csv/csv.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+
+/// Google Apps Script Web App API URL
+const String _kApiUrl =
+    'https://script.google.com/macros/s/AKfycbzVaIluUiAlEzmiNrQSHewk7fB9owJF7Mgor_pjziECWyiw7xpOX2wQfY1xlDre0GfY/exec';
+
+/// SharedPreferences key for cached JSON
+const String _kCacheKey = 'metro_routes_cache';
 
 /// Represents a segment of the metro route
 class RouteSegment {
@@ -47,85 +56,210 @@ class MetroRoute {
   });
 }
 
-/// Service to handle Metro routing and data
+/// Service to handle Metro routing and data via Google Sheets API
 class MetroService {
   // Graph: Station -> List of connected stations with weights
   final Map<String, List<_Edge>> _adjacencyList = {};
-  
-  // All unique stations
+
+  // All unique stations (including disabled ones)
   List<String> _stations = [];
-  final Map<String, List<double>> _stationCoordinates = {}; // Stores [lat, lon] for each station
-  
+  final Map<String, List<double>> _stationCoordinates = {};
+
+  // Stations that exist in the data but have NO operational connections
+  Set<String> _disabledStations = {};
+
   bool _isLoaded = false;
   bool get isLoaded => _isLoaded;
 
   List<String> getStations() => _stations;
-  
-  /// Get coordinates for a station
-  List<double>? getStationCoordinates(String stationName) => _stationCoordinates[stationName];
 
-  /// Load metro data from CSV files and stitch the graph
-  Future<void> loadNetwork() async {
+  /// Set of station names that have no operational connections.
+  Set<String> get disabledStations => _disabledStations;
+
+  /// Returns true if the station exists only on non-operational edges.
+  bool isStationDisabled(String stationName) =>
+      _disabledStations.contains(stationName);
+
+  /// Get coordinates for a station
+  List<double>? getStationCoordinates(String stationName) =>
+      _stationCoordinates[stationName];
+
+  // ─────────── Sync / Data Loading ───────────
+
+  /// Main entry point: sync metro data from API or cache.
+  /// Call this on app startup.
+  Future<void> syncMetroData() async {
     if (_isLoaded) return;
 
     try {
-      final files = [
-        'assets/data/blue_line.csv',
-        'assets/data/green_line.csv',
-        'assets/data/purple_line.csv',
-        'assets/data/orange_line.csv',
-        'assets/data/yellow_line.csv',
-      ];
+      final isOnline = await _checkConnectivity();
 
-      for (final file in files) {
-        final String rawCsv = await rootBundle.loadString(file);
-        parseCsv(rawCsv);
+      if (isOnline) {
+        await _fetchFromApi();
+      } else {
+        await _loadFromCache();
       }
-      
-      _isLoaded = true;
     } catch (e) {
-      debugPrint('Error loading metro data: $e');
-      rethrow; 
+      debugPrint('MetroService.syncMetroData error: $e');
+      // Try cache as last resort
+      if (!_isLoaded) {
+        try {
+          await _loadFromCache();
+        } catch (cacheError) {
+          debugPrint('MetroService: Cache fallback also failed: $cacheError');
+        }
+      }
     }
   }
 
-  /// Parse CSV data and build graph
-  /// Expected format: Station1,Station2,Line,Time,Fare,Lat1,Lon1,Lat2,Lon2
-  void parseCsv(String rawCsv) {
+  /// Check if the device has network connectivity.
+  Future<bool> _checkConnectivity() async {
     try {
-      final List<List<dynamic>> rows = const CsvToListConverter().convert(rawCsv, eol: '\n');
-
-      for (int i = 1; i < rows.length; i++) {
-        final row = rows[i];
-        if (row.length < 5) continue;
-
-        final String u = row[0].toString().trim();
-        final String v = row[1].toString().trim();
-        final String line = row[2].toString().trim();
-        final int time = int.tryParse(row[3].toString()) ?? 0;
-        final double fare = double.tryParse(row[4].toString()) ?? 0.0;
-
-        _addEdge(u, v, line, time, fare);
-        _addEdge(v, u, line, time, fare); // Undirected graph
-        
-        // Extract Coordinates if available
-        if (row.length >= 9) {
-           final double lat1 = double.tryParse(row[5].toString()) ?? 0.0;
-           final double lon1 = double.tryParse(row[6].toString()) ?? 0.0;
-           final double lat2 = double.tryParse(row[7].toString()) ?? 0.0;
-           final double lon2 = double.tryParse(row[8].toString()) ?? 0.0;
-           
-           if (lat1 != 0.0 && lon1 != 0.0) _stationCoordinates[u] = [lat1, lon1];
-           if (lat2 != 0.0 && lon2 != 0.0) _stationCoordinates[v] = [lat2, lon2];
-        }
-      }
-
-      _stations = _adjacencyList.keys.toList()..sort();
-      _isLoaded = true; // Set flag after successful parsing
-    } catch (e) {
-      debugPrint('Error parsing CSV: $e');
-      rethrow;
+      final result = await Connectivity().checkConnectivity();
+      return !result.contains(ConnectivityResult.none);
+    } catch (_) {
+      return false;
     }
+  }
+
+  /// Fetch route data from the Google Sheets API via HTTP GET.
+  Future<void> _fetchFromApi() async {
+    debugPrint('MetroService: Fetching data from API…');
+
+    final response = await http.get(Uri.parse(_kApiUrl)).timeout(
+      const Duration(seconds: 15),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('API returned HTTP ${response.statusCode}');
+    }
+
+    final String jsonString = response.body;
+    final List<dynamic> data = json.decode(jsonString) as List<dynamic>;
+
+    // Parse and build graph
+    _buildGraphFromJson(data);
+
+    // Cache the raw JSON for offline use
+    await _saveToCache(jsonString);
+
+    debugPrint('MetroService: Loaded ${_stations.length} stations from API');
+  }
+
+  /// Load cached JSON data from SharedPreferences.
+  Future<void> _loadFromCache() async {
+    debugPrint('MetroService: Loading data from cache…');
+
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString(_kCacheKey);
+
+    if (cached == null || cached.isEmpty) {
+      debugPrint('MetroService: No cached data available');
+      return;
+    }
+
+    final List<dynamic> data = json.decode(cached) as List<dynamic>;
+    _buildGraphFromJson(data);
+
+    debugPrint('MetroService: Loaded ${_stations.length} stations from cache');
+  }
+
+  /// Save raw JSON string to SharedPreferences.
+  Future<void> _saveToCache(String jsonString) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kCacheKey, jsonString);
+  }
+
+  // ─────────── Graph Building ───────────
+
+  /// Build the adjacency-list graph from parsed JSON data.
+  /// Each entry represents an edge between two stations.
+  /// 
+  /// Expected JSON fields:
+  /// Station1, Station2, Line, Time, Fare, Lat1, Lon1, Lat2, Lon2, Is_Operational
+  void _buildGraphFromJson(List<dynamic> data) {
+    _adjacencyList.clear();
+    _stations.clear();
+    _stationCoordinates.clear();
+    _disabledStations.clear();
+    _isLoaded = false;
+
+    // First pass: collect ALL station names from every row (operational or not)
+    final Set<String> allStationNames = {};
+
+    for (final item in data) {
+      if (item is! Map<String, dynamic>) continue;
+
+      final String u = (item['Station1'] ?? item['station1'] ?? '').toString().trim();
+      final String v = (item['Station2'] ?? item['station2'] ?? '').toString().trim();
+      final String line = (item['Line'] ?? item['line'] ?? '').toString().trim();
+      final int time = _parseInt(item['Time'] ?? item['time']);
+      final double fare = _parseDouble(item['Fare'] ?? item['fare']);
+
+      if (u.isEmpty || v.isEmpty) continue;
+
+      // Track every station name regardless of operational status
+      allStationNames.add(u);
+      allStationNames.add(v);
+
+      // Parse coordinates
+      final double lat1 = _parseDouble(item['Lat1'] ?? item['lat1']);
+      final double lon1 = _parseDouble(item['Lon1'] ?? item['lon1']);
+      final double lat2 = _parseDouble(item['Lat2'] ?? item['lat2']);
+      final double lon2 = _parseDouble(item['Lon2'] ?? item['lon2']);
+
+      if (lat1 != 0.0 && lon1 != 0.0) _stationCoordinates[u] = [lat1, lon1];
+      if (lat2 != 0.0 && lon2 != 0.0) _stationCoordinates[v] = [lat2, lon2];
+
+      // Check Is_Operational flag — skip edge if not operational
+      final isOperational = _parseBool(
+        item['Is_Operational'] ?? item['is_operational'] ?? item['IsOperational'] ?? true,
+      );
+
+      if (!isOperational) continue;
+
+      _addEdge(u, v, line, time, fare);
+      _addEdge(v, u, line, time, fare); // Undirected graph
+    }
+
+    // Disabled stations = stations that appear in data but have zero operational edges
+    _disabledStations = allStationNames.difference(_adjacencyList.keys.toSet());
+
+    // Include ALL stations (operational + disabled) in the sorted list
+    _stations = allStationNames.toList()..sort();
+    _isLoaded = true;
+  }
+
+  /// Parse JSON data from a list of maps (for testing without network).
+  /// This is the public API for tests.
+  void parseJsonData(List<Map<String, dynamic>> data) {
+    _buildGraphFromJson(data);
+  }
+
+  // ─────────── Helpers ───────────
+
+  int _parseInt(dynamic val) {
+    if (val is int) return val;
+    if (val is double) return val.toInt();
+    if (val is String) return int.tryParse(val) ?? 0;
+    return 0;
+  }
+
+  double _parseDouble(dynamic val) {
+    if (val is double) return val;
+    if (val is int) return val.toDouble();
+    if (val is String) return double.tryParse(val) ?? 0.0;
+    return 0.0;
+  }
+
+  bool _parseBool(dynamic val) {
+    if (val is bool) return val;
+    if (val is String) {
+      final lower = val.toLowerCase().trim();
+      return lower == 'true' || lower == 'yes' || lower == '1';
+    }
+    if (val is num) return val != 0;
+    return true;
   }
 
   void _addEdge(String u, String v, String line, int time, double fare) {
@@ -133,18 +267,34 @@ class MetroService {
     _adjacencyList[u]!.add(_Edge(to: v, line: line, time: time, fare: fare));
   }
 
+  // ─────────── Pathfinding (Dijkstra) ───────────
 
+  /// Reload the network (re-sync from API or cache).
+  Future<void> reloadNetwork() async {
+    _adjacencyList.clear();
+    _stations.clear();
+    _stationCoordinates.clear();
+    _isLoaded = false;
+    await syncMetroData();
+  }
 
-  /// Find the shortest path using Dijkstra's algorithm (minimizing time)
+  /// Legacy alias — calls syncMetroData().
+  Future<void> loadNetwork() async {
+    await syncMetroData();
+  }
+
+  /// Find the shortest path using Dijkstra's algorithm (minimizing time).
   MetroRoute? findRoute(String start, String end) {
-    if (!_isLoaded || !_adjacencyList.containsKey(start) || !_adjacencyList.containsKey(end)) {
+    if (!_isLoaded ||
+        !_adjacencyList.containsKey(start) ||
+        !_adjacencyList.containsKey(end)) {
       return null;
     }
 
     // Priority Queue: (time, station)
     final SplayTreeMap<int, Set<String>> pq = SplayTreeMap();
     final Map<String, int> dist = {};
-    final Map<String, _Edge> previous = {}; // To reconstruct path
+    final Map<String, _Edge> previous = {};
     final Map<String, String> previousStation = {};
 
     // Initialize distances
@@ -159,11 +309,11 @@ class MetroService {
       final int currentDist = pq.firstKey()!;
       final Set<String> currentStations = pq[currentDist]!;
       final String u = currentStations.first;
-      
+
       currentStations.remove(u);
       if (currentStations.isEmpty) pq.remove(currentDist);
 
-      if (u == end) break; // Reached destination
+      if (u == end) break;
 
       if (currentDist > dist[u]!) continue;
 
@@ -172,7 +322,7 @@ class MetroService {
 
       for (final edge in neighbors) {
         final int newDist = currentDist + edge.time;
-        
+
         if (newDist < dist[edge.to]!) {
           dist[edge.to] = newDist;
           previous[edge.to] = edge;
@@ -182,41 +332,38 @@ class MetroService {
       }
     }
 
-    if (dist[end] == 999999) return null; // No path found
+    if (dist[end] == 999999) return null;
 
     // Reconstruct path
     final List<RouteSegment> segments = [];
     String? curr = end;
-    
-    // We reconstruct backwards, so we collect edges.
-    // However, the requested format is a sequence of stations with line info.
-    // The "Line" applies to the connection *to* the node.
-    
-    // Let's build the segment list backwards
+
     while (curr != start) {
       final String? prev = previousStation[curr];
       final _Edge? edge = previous[curr];
       if (prev == null || edge == null) break;
 
-      segments.insert(0, RouteSegment(
-        station: curr!,
-        line: edge.line,
-        time: edge.time,
-        fare: edge.fare,
-      ));
+      segments.insert(
+        0,
+        RouteSegment(
+          station: curr!,
+          line: edge.line,
+          time: edge.time,
+          fare: edge.fare,
+        ),
+      );
       curr = prev;
     }
-    
-    // Add start station as the first segment (dummy values for line/time/fare or representing start)
-    // Actually, usually a route list includes the start point. 
-    // Let's modify the requirement to list stations.
-    // The first item should be the start station.
-    segments.insert(0, RouteSegment(
-      station: start,
-      line: segments.isNotEmpty ? segments.first.line : 'Start', // Use next line or placeholder
-      time: 0,
-      fare: 0,
-    ));
+
+    segments.insert(
+      0,
+      RouteSegment(
+        station: start,
+        line: segments.isNotEmpty ? segments.first.line : 'Start',
+        time: 0,
+        fare: 0,
+      ),
+    );
 
     return _calculateRouteDetails(segments);
   }
@@ -227,36 +374,23 @@ class MetroService {
     List<String> interchanges = [];
     String? currentLine;
 
-    // Iterate starting from the first connection (index 1)
     for (int i = 0; i < rawSegments.length; i++) {
-        final segment = rawSegments[i];
-        
-        if (i > 0) {
-           totalTime += segment.time;
-           totalFare += segment.fare;
-        }
+      final segment = rawSegments[i];
 
-        // Logic for interchange:
-        // Compare current segment line with previous segment line (if not start)
-        // If index is 1 (first actual move), set currentLine.
-        // If line changes, add previous station (the transfer point) to interchanges.
-        
-        if (i == 1) {
-            currentLine = segment.line;
-        } else if (i > 1) {
-            if (segment.line != currentLine) {
-                // The station valid *before* this segment was the interchange
-                // segments[i-1] is the station node where we are switching *from*
-                interchanges.add(rawSegments[i-1].station);
-                currentLine = segment.line;
-            }
+      if (i > 0) {
+        totalTime += segment.time;
+        totalFare += segment.fare;
+      }
+
+      if (i == 1) {
+        currentLine = segment.line;
+      } else if (i > 1) {
+        if (segment.line != currentLine) {
+          interchanges.add(rawSegments[i - 1].station);
+          currentLine = segment.line;
         }
+      }
     }
-
-    // Special case for fare calculation: 
-    // Metro networks usually calculate fare based on total distance/zones, not sum of edge fares.
-    // However, the instructions say "Sum the total FareAmount ... for all segments".
-    // I will stick to the instruction.
 
     return MetroRoute(
       segments: rawSegments,

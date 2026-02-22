@@ -466,6 +466,11 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
     required String? value,
     required ValueChanged<String?> onChanged,
   }) {
+    // If the current value is a disabled station, reset it
+    final safeValue = (value != null && _metroService.isStationDisabled(value))
+        ? null
+        : value;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -499,20 +504,50 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
                 ),
                 DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
-                    value: value,
+                    value: safeValue,
                     hint: const Text('Select station'),
                     isExpanded: true,
-                    // Use loaded stations
                     items: _stations.map((station) {
+                      final isDisabled = _metroService.isStationDisabled(station);
                       return DropdownMenuItem(
                         value: station,
-                        child: Text(
-                          station,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        child: isDisabled
+                            ? Tooltip(
+                                message: 'This station is currently out of service',
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        station,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(color: Colors.grey),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    const Icon(Icons.info_outline, color: Colors.grey, size: 16),
+                                  ],
+                                ),
+                              )
+                            : Text(
+                                station,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                       );
                     }).toList(),
-                    onChanged: onChanged,
+                    onChanged: (selected) {
+                      if (selected != null && _metroService.isStationDisabled(selected)) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'This station is currently out of service and cannot be selected.',
+                            ),
+                            backgroundColor: Colors.orange,
+                          ),
+                        );
+                        return;
+                      }
+                      onChanged(selected);
+                    },
                   ),
                 ),
               ],
