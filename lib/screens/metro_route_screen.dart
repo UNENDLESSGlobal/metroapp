@@ -25,6 +25,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
   bool _isLoading = false;
   List<String> _stations = [];
   MetroRoute? _calculatedRoute;
+  List<Map<String, dynamic>> _blockedStations = [];
   
   // Tracking State
   TripTrackingService? _trackingService;
@@ -151,7 +152,10 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _blockedStations = [];
+    });
 
     // Artificial delay for UX
     await Future.delayed(const Duration(milliseconds: 500));
@@ -159,26 +163,35 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
     try {
       final route = _metroService.findRoute(_startStation!, _endStation!);
 
+      // Get blocked stations on the ideal (unrestricted) path
+      final blocked = _metroService.getBlockedStationsOnIdealPath(
+        _startStation!,
+        _endStation!,
+      );
+
       if (route == null) {
+        // Scenario A: No route available
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No direct metro route available'),
-              backgroundColor: Colors.red,
-            ),
-          );
+          setState(() {
+            _calculatedRoute = null;
+            _blockedStations = blocked;
+          });
+          if (blocked.isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('No metro route available between these stations'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
         }
       } else {
+        // Scenario B: Route found (may be alternate)
         if (mounted) {
           setState(() {
             _calculatedRoute = route;
+            _blockedStations = blocked;
           });
-          
-          // Optionally save to history here if "Start Trip" implies actually taking it,
-          // but usually users want to see the route first.
-          // Let's add a separate "Save Trip" or "Go" button in the result view?
-          // For now, I'll log it as per original code logic but also show the UI.
-          
           _saveTripToHistory(route);
         }
       }
@@ -362,6 +375,11 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
                           ),
                         ),
                 ),
+
+                if (_blockedStations.isNotEmpty) ...[
+                  const SizedBox(height: 24),
+                  _buildBlockedStationsBanner(),
+                ],
 
                 if (_calculatedRoute != null) ...[
                   const SizedBox(height: 32),
@@ -820,5 +838,116 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildBlockedStationsBanner() {
+    final bool noRoute = _calculatedRoute == null;
+    final Color bannerColor = noRoute ? Colors.red : Colors.orange;
+    final String message = noRoute
+        ? 'Cannot find a route. The following stations are currently out of service:'
+        : 'Showing alternate route. The shortest path is blocked because the following stations are out of service:';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: bannerColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: bannerColor.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                noRoute ? Icons.error_outline : Icons.info_outline,
+                color: bannerColor,
+                size: 22,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  noRoute ? 'Route Unavailable' : 'Service Disruption',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: bannerColor,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message,
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _blockedStations.map((info) {
+              final String name = info['station'] as String;
+              final String line = info['line'] as String;
+              final Color chipColor = _lineColor(line);
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: chipColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: chipColor.withValues(alpha: 0.4)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: chipColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: chipColor.withValues(alpha: 0.9),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '($line)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: chipColor.withValues(alpha: 0.6),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _lineColor(String lineName) {
+    switch (lineName.toLowerCase()) {
+      case 'blue':   return const Color(0xFF3B82F6);
+      case 'green':  return const Color(0xFF10B981);
+      case 'orange': return const Color(0xFFF97316);
+      case 'purple': return const Color(0xFF8B5CF6);
+      case 'yellow': return const Color(0xFFEAB308);
+      case 'red':    return const Color(0xFFEF4444);
+      default:       return Colors.grey;
+    }
   }
 }

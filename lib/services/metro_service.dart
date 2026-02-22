@@ -58,12 +58,18 @@ class MetroRoute {
 
 /// Service to handle Metro routing and data via Google Sheets API
 class MetroService {
-  // Graph: Station -> List of connected stations with weights
+  // Graph: Station -> List of connected stations with weights (operational only)
   final Map<String, List<_Edge>> _adjacencyList = {};
+
+  // Full graph including disabled edges (for ideal-path diagnostics)
+  final Map<String, List<_Edge>> _fullAdjacencyList = {};
 
   // All unique stations (including disabled ones)
   List<String> _stations = [];
   final Map<String, List<double>> _stationCoordinates = {};
+
+  // Maps station name -> its primary line color/name
+  final Map<String, String> _stationLineMap = {};
 
   // Stations that exist in the data but have NO operational connections
   Set<String> _disabledStations = {};
@@ -79,6 +85,10 @@ class MetroService {
   /// Returns true if the station exists only on non-operational edges.
   bool isStationDisabled(String stationName) =>
       _disabledStations.contains(stationName);
+
+  /// Get the primary metro line name for a station (e.g. 'Blue', 'Green').
+  String getStationLine(String stationName) =>
+      _stationLineMap[stationName] ?? 'Unknown';
 
   /// Get coordinates for a station
   List<double>? getStationCoordinates(String stationName) =>
@@ -179,8 +189,10 @@ class MetroService {
   /// Station1, Station2, Line, Time, Fare, Lat1, Lon1, Lat2, Lon2, Is_Operational
   void _buildGraphFromJson(List<dynamic> data) {
     _adjacencyList.clear();
+    _fullAdjacencyList.clear();
     _stations.clear();
     _stationCoordinates.clear();
+    _stationLineMap.clear();
     _disabledStations.clear();
     _isLoaded = false;
 
@@ -202,6 +214,10 @@ class MetroService {
       allStationNames.add(u);
       allStationNames.add(v);
 
+      // Map station -> line (first seen line wins)
+      _stationLineMap.putIfAbsent(u, () => line);
+      _stationLineMap.putIfAbsent(v, () => line);
+
       // Parse coordinates
       final double lat1 = _parseDouble(item['Lat1'] ?? item['lat1']);
       final double lon1 = _parseDouble(item['Lon1'] ?? item['lon1']);
@@ -211,15 +227,20 @@ class MetroService {
       if (lat1 != 0.0 && lon1 != 0.0) _stationCoordinates[u] = [lat1, lon1];
       if (lat2 != 0.0 && lon2 != 0.0) _stationCoordinates[v] = [lat2, lon2];
 
-      // Check Is_Operational flag — skip edge if not operational
+      // Check Is_Operational flag
       final isOperational = _parseBool(
         item['Is_Operational'] ?? item['is_operational'] ?? item['IsOperational'] ?? true,
       );
 
+      // Always add to FULL adjacency list (for ideal-path diagnostics)
+      _addEdgeTo(_fullAdjacencyList, u, v, line, time, fare);
+      _addEdgeTo(_fullAdjacencyList, v, u, line, time, fare);
+
+      // Only add operational edges to the main graph
       if (!isOperational) continue;
 
       _addEdge(u, v, line, time, fare);
-      _addEdge(v, u, line, time, fare); // Undirected graph
+      _addEdge(v, u, line, time, fare);
     }
 
     // Disabled stations = stations that appear in data but have zero operational edges
@@ -267,13 +288,20 @@ class MetroService {
     _adjacencyList[u]!.add(_Edge(to: v, line: line, time: time, fare: fare));
   }
 
+  void _addEdgeTo(Map<String, List<_Edge>> graph, String u, String v, String line, int time, double fare) {
+    if (!graph.containsKey(u)) graph[u] = [];
+    graph[u]!.add(_Edge(to: v, line: line, time: time, fare: fare));
+  }
+
   // ─────────── Pathfinding (Dijkstra) ───────────
 
   /// Reload the network (re-sync from API or cache).
   Future<void> reloadNetwork() async {
     _adjacencyList.clear();
+    _fullAdjacencyList.clear();
     _stations.clear();
     _stationCoordinates.clear();
+    _stationLineMap.clear();
     _isLoaded = false;
     await syncMetroData();
   }
@@ -404,6 +432,106 @@ class MetroService {
     if (!pq.containsKey(dist)) pq[dist] = <String>{};
     pq[dist]!.add(node);
   }
+
+  // ─────────── Blocked Station Diagnostics ───────────
+
+  /// Run Dijkstra on the FULL graph (ignoring Is_Operational) to find the ideal
+  /// shortest path, then report which edges along it are disabled.
+  ///
+  /// Returns a list of maps, e.g.:
+  /// `[{'station': 'Shyambazar', 'line': 'Blue'}, ...]`
+  List<Map<String, dynamic>> getBlockedStationsOnIdealPath(String start, String end) {
+    if (!_isLoaded) return [];
+    if (!_fullAdjacencyList.containsKey(start) ||
+        !_fullAdjacencyList.containsKey(end)) {
+      return [];
+    }
+
+    // Run Dijkstra on the FULL graph
+    final SplayTreeMap<int, Set<String>> pq = SplayTreeMap();
+    final Map<String, int> dist = {};
+    final Map<String, _Edge> previous = {};
+    final Map<String, String> previousStation = {};
+
+    for (final station in _stations) {
+      dist[station] = 999999;
+    }
+
+    dist[start] = 0;
+    _addToPQ(pq, 0, start);
+
+    while (pq.isNotEmpty) {
+      final int currentDist = pq.firstKey()!;
+      final Set<String> currentStations = pq[currentDist]!;
+      final String u = currentStations.first;
+
+      currentStations.remove(u);
+      if (currentStations.isEmpty) pq.remove(currentDist);
+
+      if (u == end) break;
+      if (currentDist > dist[u]!) continue;
+
+      final neighbors = _fullAdjacencyList[u];
+      if (neighbors == null) continue;
+
+      for (final edge in neighbors) {
+        final int newDist = currentDist + edge.time;
+        if (newDist < dist[edge.to]!) {
+          dist[edge.to] = newDist;
+          previous[edge.to] = edge;
+          previousStation[edge.to] = u;
+          _addToPQ(pq, newDist, edge.to);
+        }
+      }
+    }
+
+    if (dist[end] == 999999) return [];
+
+    // Reconstruct ideal path as list of (from, to, line)
+    final List<_IdealEdge> idealPath = [];
+    String? curr = end;
+    while (curr != start) {
+      final String? prev = previousStation[curr];
+      final _Edge? edge = previous[curr];
+      if (prev == null || edge == null) break;
+      idealPath.insert(0, _IdealEdge(from: prev, to: curr!, line: edge.line));
+      curr = prev;
+    }
+
+    // Check which edges on the ideal path are NOT in the operational graph
+    final Set<String> blockedStationNames = {};
+    final List<Map<String, dynamic>> result = [];
+
+    for (final ie in idealPath) {
+      // Check if this edge exists in the operational adjacency list
+      final neighbors = _adjacencyList[ie.from];
+      final isOperational = neighbors != null &&
+          neighbors.any((e) => e.to == ie.to && e.line == ie.line);
+
+      if (!isOperational) {
+        // Both endpoints are affected
+        for (final station in [ie.from, ie.to]) {
+          if (!blockedStationNames.contains(station)) {
+            blockedStationNames.add(station);
+            result.add({
+              'station': station,
+              'line': _stationLineMap[station] ?? ie.line,
+            });
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+}
+
+class _IdealEdge {
+  final String from;
+  final String to;
+  final String line;
+
+  _IdealEdge({required this.from, required this.to, required this.line});
 }
 
 class _Edge {
