@@ -7,32 +7,40 @@ import 'package:geolocator/geolocator.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:vibration/vibration.dart';
 
-// Entry point for the background service
+// ─────────── Background isolate entry point ───────────
+
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
+  WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
 
-  // Notification setup
-  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-      FlutterLocalNotificationsPlugin();
+  // ── Notification setup ──
+  final notifPlugin = FlutterLocalNotificationsPlugin();
 
-  const AndroidNotificationChannel channel = AndroidNotificationChannel(
-    'metro_tracking_channel', // id
-    'Metro Tracking', // title
-    description: 'Ongoing metro trip tracking', // description
-    importance: Importance.low, // Low importance to avoid sound on every update
+  const trackingChannel = AndroidNotificationChannel(
+    'metro_tracking_channel',
+    'Metro Tracking',
+    description: 'Ongoing metro trip tracking',
+    importance: Importance.low,
   );
 
-  await flutterLocalNotificationsPlugin
-      .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>()
-      ?.createNotificationChannel(channel);
+  const alarmChannel = AndroidNotificationChannel(
+    'metro_alarm_channel',
+    'Metro Alarm',
+    description: 'Destination arrival alarm',
+    importance: Importance.max,
+  );
 
-  // Default notification
-  await flutterLocalNotificationsPlugin.show(
+  final androidImpl =
+      notifPlugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+  await androidImpl?.createNotificationChannel(trackingChannel);
+  await androidImpl?.createNotificationChannel(alarmChannel);
+
+  await notifPlugin.show(
     888,
     'Metro Trip Tracking',
-    'Waiting for trip details...',
+    'Waiting for trip details…',
     const NotificationDetails(
       android: AndroidNotificationDetails(
         'metro_tracking_channel',
@@ -43,143 +51,225 @@ void onStart(ServiceInstance service) async {
     ),
   );
 
-  // State
-  List<Map<String, dynamic>> targets = [];
-  bool isAlarmRinging = false;
-  double alarmRadiusKm = 2.5;
+  // ── Hybrid tracking state ──
+  Timer? hybridTimer;
+  int elapsedSeconds = 0;
+  int totalRouteTimeMins = 0;
+  double destLat = 0;
+  double destLon = 0;
+  String destStation = '';
+  int thresholdMins = 3;
+  bool soundEnabled = true;
+  bool vibrateEnabled = true;
+  double volume = 0.8;
+  bool alarmFired = false;
 
-  // Listen for data from UI
-  service.on('startTrip').listen((event) {
-    if (event != null && event['targets'] != null) {
-      targets = List<Map<String, dynamic>>.from(event['targets']);
-      debugPrint('Background Service: Trip started with ${targets.length} targets');
-      
-      // Update notification
-      if (targets.isNotEmpty) {
-          // ignore: deprecated_member_use
-        flutterLocalNotificationsPlugin.show(
-          888,
-          'Metro Trip Tracking',
-          'Next Stop: ${targets.first['station']}',
+  // ── Start hybrid trip ──
+  service.on('startHybridTrip').listen((event) {
+    if (event == null) return;
+
+    totalRouteTimeMins = (event['totalRouteTimeMins'] as num?)?.toInt() ?? 0;
+    destLat = (event['destLat'] as num?)?.toDouble() ?? 0;
+    destLon = (event['destLon'] as num?)?.toDouble() ?? 0;
+    destStation = (event['destStation'] as String?) ?? '';
+    thresholdMins = (event['thresholdMins'] as num?)?.toInt() ?? 3;
+    soundEnabled = (event['soundEnabled'] as bool?) ?? true;
+    vibrateEnabled = (event['vibrateEnabled'] as bool?) ?? true;
+    volume = (event['volume'] as num?)?.toDouble() ?? 0.8;
+    elapsedSeconds = 0;
+    alarmFired = false;
+
+    debugPrint(
+        'BG: Hybrid trip started → $destStation, total ${totalRouteTimeMins}m');
+
+    // Update notification
+    notifPlugin.show(
+      888,
+      'Metro Tracking Active',
+      'ETA: ~$totalRouteTimeMins mins to $destStation',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'metro_tracking_channel',
+          'Metro Tracking',
+          icon: 'ic_bg_service_small',
+          ongoing: true,
+        ),
+      ),
+    );
+
+    // Cancel any previous timer
+    hybridTimer?.cancel();
+
+    // ── 10-second hybrid evaluation loop ──
+    hybridTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      elapsedSeconds += 10;
+      double remainingMins;
+      bool gpsActive = false;
+
+      // ── Primary check: GPS ──
+      try {
+        final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 5),
+        );
+
+        final distMeters = Geolocator.distanceBetween(
+          position.latitude,
+          position.longitude,
+          destLat,
+          destLon,
+        );
+        final distKm = distMeters / 1000.0;
+
+        // Convert distance to time at average metro speed (35 km/h)
+        const double metroSpeedKmPerMin = 35.0 / 60.0; // ~0.583 km/min
+        remainingMins = distKm / metroSpeedKmPerMin;
+        gpsActive = true;
+
+        // Sync the stopwatch to match physical reality
+        final newElapsed =
+            ((totalRouteTimeMins - remainingMins) * 60).round().clamp(0, totalRouteTimeMins * 60);
+        elapsedSeconds = newElapsed;
+
+        debugPrint(
+            'BG: GPS active → ${distKm.toStringAsFixed(1)}km, ETA: ${remainingMins.toStringAsFixed(1)}m');
+      } catch (_) {
+        // ── Fallback: timer math ──
+        final elapsedMins = elapsedSeconds / 60.0;
+        remainingMins = totalRouteTimeMins - elapsedMins;
+        gpsActive = false;
+
+        debugPrint(
+            'BG: GPS lost → timer fallback, ETA: ${remainingMins.toStringAsFixed(1)}m');
+      }
+
+      // Clamp to zero
+      if (remainingMins < 0) remainingMins = 0;
+
+      // ── Send ETA update to UI ──
+      service.invoke('etaUpdate', {
+        'remainingMins': remainingMins,
+        'gpsActive': gpsActive,
+        'destStation': destStation,
+      });
+
+      // ── Update persistent notification ──
+      final etaText = remainingMins < 1
+          ? 'Arriving now!'
+          : 'ETA: ~${remainingMins.round()} mins to $destStation';
+      notifPlugin.show(
+        888,
+        'Metro Tracking Active',
+        etaText + (gpsActive ? ' (GPS)' : ' (Timer)'),
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'metro_tracking_channel',
+            'Metro Tracking',
+            icon: 'ic_bg_service_small',
+            ongoing: true,
+          ),
+        ),
+      );
+
+      // ── Trigger condition ──
+      if (remainingMins <= thresholdMins && !alarmFired) {
+        alarmFired = true;
+        debugPrint('BG: ⏰ ALARM TRIGGERED! ETA: ${remainingMins.toStringAsFixed(1)}m');
+
+        // Play alarm sound
+        if (soundEnabled) {
+          await FlutterRingtonePlayer().playAlarm(
+            looping: true,
+            volume: volume,
+            asAlarm: true,
+          );
+        }
+
+        // Vibrate
+        if (vibrateEnabled) {
+          if (await Vibration.hasVibrator() == true) {
+            Vibration.vibrate(
+                pattern: [1000, 1000, 1000, 1000], repeat: 0);
+          }
+        }
+
+        // High-priority notification (pops over lock screen)
+        notifPlugin.show(
+          889,
+          '🔔 Arriving at $destStation!',
+          'Get ready! ~${remainingMins.round()} mins remaining.',
           const NotificationDetails(
             android: AndroidNotificationDetails(
-              'metro_tracking_channel',
-              'Metro Tracking',
-              icon: 'ic_bg_service_small',
-              ongoing: true,
+              'metro_alarm_channel',
+              'Metro Alarm',
+              importance: Importance.max,
+              priority: Priority.high,
+              fullScreenIntent: true,
+              playSound: true,
             ),
           ),
         );
+
+        // Notify UI to show overlay
+        service.invoke('alarmTriggered', {
+          'destStation': destStation,
+          'remainingMins': remainingMins,
+        });
       }
-    }
+    });
   });
 
-  service.on('stopTrip').listen((event) {
-    targets = [];
-    service.stopSelf();
-  });
-  
-  service.on('stopAlarm').listen((event) {
-    isAlarmRinging = false;
+  // ── Stop hybrid trip ──
+  service.on('stopHybridTrip').listen((event) {
+    hybridTimer?.cancel();
+    hybridTimer = null;
+    elapsedSeconds = 0;
+    alarmFired = false;
     FlutterRingtonePlayer().stop();
     Vibration.cancel();
+
+    // Dismiss notifications
+    notifPlugin.cancel(888);
+    notifPlugin.cancel(889);
+
+    service.stopSelf();
+    debugPrint('BG: Hybrid trip stopped');
   });
 
-  // Location tracking
-  const LocationSettings locationSettings = LocationSettings(
-    accuracy: LocationAccuracy.high,
-    distanceFilter: 50,
-  );
-
-  Geolocator.getPositionStream(locationSettings: locationSettings).listen((Position position) {
-    if (targets.isEmpty) return;
-
-    final target = targets.first;
-    final double targetLat = target['lat'];
-    final double targetLon = target['lon'];
-
-    final double distanceInMeters = Geolocator.distanceBetween(
-      position.latitude,
-      position.longitude,
-      targetLat,
-      targetLon,
-    );
-    
-    final double distanceInKm = distanceInMeters / 1000;
-
-    // Update UI about distance
-    service.invoke(
-      'update',
-      {
-        'nextStation': target['station'],
-        'distance': distanceInKm,
-      },
-    );
-
-    // Update Notification periodically (optional, maybe too frequent)
-    
-    // Check for Alarm
-    if (distanceInKm <= alarmRadiusKm) {
-        // Trigger Alarm
-        if (!isAlarmRinging) {
-             isAlarmRinging = true;
-             
-             // Invoke UI to show overlay
-             service.invoke('alarmTriggered', {'station': target['station']});
-             
-             // Play sound/vibrate directly from background
-             // Note: Volume control might be limited here as we don't have access to provider settings easily 
-             // unless passed in 'startTrip'. Assuming max volume or system default.
-             FlutterRingtonePlayer().playAlarm(looping: true, asAlarm: true);
-             Vibration.vibrate(pattern: [1000, 1000, 1000, 1000], repeat: 0);
-
-             // High importance notification
-               // ignore: deprecated_member_use
-             flutterLocalNotificationsPlugin.show(
-              889, // Different ID for alarm
-              'Arriving at ${target['station']}!',
-              'Prepare to exit.',
-              const NotificationDetails(
-                android: AndroidNotificationDetails(
-                  'metro_alarm_channel',
-                  'Metro Alarm',
-                  importance: Importance.max,
-                  priority: Priority.high,
-                  fullScreenIntent: true,
-                ),
-              ),
-            );
-        }
-        
-        // Remove this target if we are very close or logic handled by UI stopping/dismissing
-        // For now, we keep ringing until 'stopAlarm' is called by UI.
-        // Once stopped, we should remove the target.
-    }
+  // ── Stop alarm only (keep tracking) ──
+  service.on('stopAlarm').listen((event) {
+    alarmFired = true; // Prevent re-trigger
+    FlutterRingtonePlayer().stop();
+    Vibration.cancel();
+    notifPlugin.cancel(889);
+    debugPrint('BG: Alarm stopped');
   });
 }
+
+// ─────────── Service initializer ───────────
 
 Future<void> initializeService() async {
   final service = FlutterBackgroundService();
 
-  final AndroidConfiguration androidConfiguration = AndroidConfiguration(
+  final androidConfig = AndroidConfiguration(
     onStart: onStart,
     autoStart: false,
     isForegroundMode: true,
     notificationChannelId: 'metro_tracking_channel',
     initialNotificationTitle: 'Metro Trip Tracking',
-    initialNotificationContent: 'Initializing...',
+    initialNotificationContent: 'Initializing…',
     foregroundServiceNotificationId: 888,
   );
 
-  final IosConfiguration iosConfiguration = IosConfiguration(
+  final iosConfig = IosConfiguration(
     autoStart: false,
     onForeground: onStart,
     onBackground: onIosBackground,
   );
 
   await service.configure(
-    androidConfiguration: androidConfiguration,
-    iosConfiguration: iosConfiguration,
+    androidConfiguration: androidConfig,
+    iosConfiguration: iosConfig,
   );
 }
 
@@ -188,4 +278,3 @@ bool onIosBackground(ServiceInstance service) {
   WidgetsFlutterBinding.ensureInitialized();
   return true;
 }
-

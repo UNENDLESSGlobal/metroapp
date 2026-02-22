@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../models/transport_mode.dart';
 import '../models/trip.dart';
 import '../providers/app_state_provider.dart';
+import '../providers/alarm_settings_provider.dart';
 import '../providers/trip_provider.dart';
 import '../core/constants/app_colors.dart';
 import '../services/metro_service.dart';
-import '../services/trip_tracking_service.dart';
+import '../services/hybrid_tracking_service.dart';
 
 
 /// Metro route selection screen
@@ -28,10 +30,15 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
   List<Map<String, dynamic>> _blockedStations = [];
   
   // Tracking State
-  TripTrackingService? _trackingService;
+  HybridTrackingService? _trackingService;
   bool _isTracking = false;
-  String _trackingStatus = '';
+  double _etaMinutes = 0;
+  bool _gpsActive = false;
   bool _isAlarmRinging = false;
+  String _alarmDestStation = '';
+  double _alarmRemainingMins = 0;
+  int _totalRouteTime = 0;
+  String _destStationName = '';
 
   @override
   void initState() {
@@ -41,25 +48,33 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
       _initTracking();
     });
   }
-  
+
   void _initTracking() async {
-      // Create instances. 
-      // Note: AlarmSettingsProvider should be available above in widget tree.
-      // Ensure MultiProvider includes it in main.dart or where appropriate.
-      try {
-        _trackingService = TripTrackingService(_metroService);
-        await _trackingService?.init();
-        
-        _trackingService?.onStatusUpdate = (status) {
-           if (mounted) setState(() => _trackingStatus = status);
-        };
-        
-        _trackingService?.onAlarmTriggered = () {
-           if (mounted) setState(() => _isAlarmRinging = true);
-        };
-      } catch (e) {
-        debugPrint('Error initializing tracking: $e');
-      }
+    try {
+      _trackingService = HybridTrackingService();
+      await _trackingService?.init();
+
+      _trackingService?.onEtaUpdate = (remaining, gps, dest) {
+        if (mounted) {
+          setState(() {
+            _etaMinutes = remaining;
+            _gpsActive = gps;
+          });
+        }
+      };
+
+      _trackingService?.onAlarmTriggered = (dest, remaining) {
+        if (mounted) {
+          setState(() {
+            _isAlarmRinging = true;
+            _alarmDestStation = dest;
+            _alarmRemainingMins = remaining;
+          });
+        }
+      };
+    } catch (e) {
+      debugPrint('Error initializing tracking: $e');
+    }
   }
 
   @override
@@ -70,25 +85,76 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
 
   Future<void> _toggleTracking() async {
     if (_isTracking) {
+      HapticFeedback.heavyImpact();
       await _trackingService?.stopTracking();
       if (mounted) {
         setState(() {
           _isTracking = false;
-          _trackingStatus = '';
+          _etaMinutes = 0;
+          _gpsActive = false;
           _isAlarmRinging = false;
         });
       }
     } else {
+      HapticFeedback.mediumImpact();
       if (_calculatedRoute == null) return;
-      await _trackingService?.startTracking(_calculatedRoute!);
+
+      // Get destination coordinates
+      final destSegment = _calculatedRoute!.segments.last;
+      final destCoords = _metroService.getStationCoordinates(destSegment.station);
+      if (destCoords == null || destCoords.length < 2) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No GPS coordinates for destination'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Read alarm settings
+      final alarmSettings = context.read<AlarmSettingsProvider>();
+
+      await _trackingService?.startTracking(
+        totalRouteTimeMins: _calculatedRoute!.totalTime,
+        destLat: destCoords[0],
+        destLon: destCoords[1],
+        destStation: destSegment.station,
+        thresholdMins: alarmSettings.alarmThresholdMinutes,
+        soundEnabled: alarmSettings.isSoundEnabled,
+        vibrateEnabled: alarmSettings.isVibrateEnabled,
+        volume: alarmSettings.volume,
+      );
+
       if (mounted) {
-        setState(() => _isTracking = true);
+        setState(() {
+          _isTracking = true;
+          _totalRouteTime = _calculatedRoute!.totalTime;
+          _destStationName = destSegment.station;
+          _etaMinutes = _totalRouteTime.toDouble();
+        });
       }
     }
   }
-  
+
   Future<void> _stopAlarm() async {
-      await _toggleTracking(); // Stop everything for now
+    await _trackingService?.stopAlarm();
+    if (mounted) {
+      setState(() => _isAlarmRinging = false);
+    }
+  }
+
+  Future<void> _stopAlarmAndTracking() async {
+    await _trackingService?.stopTracking();
+    if (mounted) {
+      setState(() {
+        _isAlarmRinging = false;
+        _isTracking = false;
+        _etaMinutes = 0;
+      });
+    }
   }
 
   Future<void> _loadStations() async {
@@ -132,7 +198,10 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
   }
 
   Future<void> _calculateAndStartTrip() async {
+    HapticFeedback.mediumImpact();
+
     if (_startStation == null || _endStation == null) {
+      HapticFeedback.heavyImpact();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please select start and end stations'),
@@ -143,6 +212,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
     }
 
     if (_startStation == _endStation) {
+      HapticFeedback.heavyImpact();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Start and end stations cannot be the same'),
@@ -171,6 +241,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
 
       if (route == null) {
         // Scenario A: No route available
+        HapticFeedback.heavyImpact();
         if (mounted) {
           setState(() {
             _calculatedRoute = null;
@@ -187,6 +258,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
         }
       } else {
         // Scenario B: Route found (may be alternate)
+        HapticFeedback.lightImpact();
         if (mounted) {
           setState(() {
             _calculatedRoute = route;
@@ -307,6 +379,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
                   icon: Icons.trip_origin,
                   value: _startStation,
                   onChanged: (value) {
+                    HapticFeedback.selectionClick();
                     setState(() {
                       _startStation = value;
                       _calculatedRoute = null; // Reset result on change
@@ -339,6 +412,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
                   icon: Icons.location_on,
                   value: _endStation,
                   onChanged: (value) {
+                    HapticFeedback.selectionClick();
                     setState(() {
                       _endStation = value;
                       _calculatedRoute = null;
@@ -388,47 +462,29 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
                   _buildRouteResult(_calculatedRoute!),
                   const SizedBox(height: 24),
 
-                  // Tracking Controls
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: _isTracking ? Colors.green.shade50 : Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _isTracking ? Colors.green : Colors.blue,
-                      ),
-                    ),
-                    child: Column(
-                      children: [
-                        if (_trackingStatus.isNotEmpty) ...[
-                          Text(
-                            _trackingStatus,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: _isTracking ? Colors.green.shade800 : Colors.blue.shade800,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                        ],
-                        ElevatedButton.icon(
-                          onPressed: _toggleTracking,
-                          icon: Icon(_isTracking ? Icons.stop : Icons.navigation),
-                          label: Text(_isTracking ? 'Stop Trip' : 'Start Live Tracking'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _isTracking ? Colors.red : Colors.blue,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  // Animated transition: idle ↔ active navigation dashboard
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 400),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeIn,
+                    transitionBuilder: (child, animation) =>
+                        FadeTransition(
+                          opacity: animation,
+                          child: SizeTransition(
+                            sizeFactor: animation,
+                            axisAlignment: -1.0,
+                            child: child,
                           ),
                         ),
-                      ],
-                    ),
+                    child: _isTracking
+                        ? _buildLiveNavigationDashboard()
+                        : _buildStartTrackingButton(),
                   ),
                 ],
               ],
             ),
           ),
+          // Full-screen alarm overlay
           if (_isAlarmRinging)
             Container(
               color: Colors.black87,
@@ -440,39 +496,299 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
                   const Icon(Icons.alarm_on, size: 80, color: Colors.white),
                   const SizedBox(height: 24),
                   const Text(
-                    'Arriving Soon!',
+                    'Get ready!',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Please prepare to exit or change lines.',
-                    style: TextStyle(color: Colors.white70, fontSize: 18),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Arriving at $_alarmDestStation\nin ~${_alarmRemainingMins.round()} mins',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70, fontSize: 20),
                   ),
                   const SizedBox(height: 48),
                   SizedBox(
-                    width: 200,
+                    width: 220,
                     height: 60,
                     child: ElevatedButton(
-                      onPressed: _stopAlarm, // Stops alarm and tracking
+                      onPressed: _stopAlarm,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
+                        backgroundColor: Colors.orange,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(30),
                         ),
                       ),
                       child: const Text(
                         'STOP ALARM',
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: _stopAlarmAndTracking,
+                    child: const Text(
+                      'Stop Alarm & End Trip',
+                      style: TextStyle(color: Colors.white54, fontSize: 14),
                     ),
                   ),
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  // ─────────── Start Tracking Button (idle state) ───────────
+
+  Widget _buildStartTrackingButton() {
+    return Container(
+      key: const ValueKey('idle'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: ElevatedButton.icon(
+        onPressed: _toggleTracking,
+        icon: const Icon(Icons.navigation),
+        label: const Text('Start Live Tracking'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.blue,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(30),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ─────────── Live Navigation Dashboard (active state) ───────────
+
+  Widget _buildLiveNavigationDashboard() {
+    // Progress calculation
+    final double progress = _totalRouteTime > 0
+        ? ((_totalRouteTime - _etaMinutes) / _totalRouteTime).clamp(0.0, 1.0)
+        : 0.0;
+    final int elapsedMins = (_totalRouteTime - _etaMinutes).round().clamp(0, _totalRouteTime);
+
+    return Container(
+      key: const ValueKey('active'),
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF1A1A2E),
+            Color(0xFF16213E),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.3),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // ── Status Header ──
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.08),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(20),
+                topRight: Radius.circular(20),
+              ),
+            ),
+            child: Row(
+              children: [
+                // Pulsing dot
+                _PulsingDot(color: Colors.greenAccent.shade400),
+                const SizedBox(width: 10),
+                const Text(
+                  'Live Tracking Active',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                const Spacer(),
+                // GPS / Timer badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: _gpsActive
+                        ? Colors.green.withValues(alpha: 0.2)
+                        : Colors.orange.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: _gpsActive
+                          ? Colors.greenAccent.shade200
+                          : Colors.orangeAccent.shade200,
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _gpsActive ? '🛰️' : '⏱️',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _gpsActive ? 'GPS' : 'Timer',
+                        style: TextStyle(
+                          color: _gpsActive ? Colors.greenAccent : Colors.orangeAccent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              children: [
+                // ── Large ETA metrics ──
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${_etaMinutes.round()}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 56,
+                        fontWeight: FontWeight.w800,
+                        height: 1.0,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'min\nremaining',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 13,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '$elapsedMins min elapsed',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.5),
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${(progress * 100).round()}% complete',
+                          style: TextStyle(
+                            color: Colors.greenAccent.shade200,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // ── Progress Bar ──
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 8,
+                    backgroundColor: Colors.white.withValues(alpha: 0.1),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      progress < 0.7
+                          ? Colors.greenAccent.shade400
+                          : progress < 0.9
+                              ? Colors.orangeAccent
+                              : Colors.redAccent,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // ── Destination label ──
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.location_on,
+                          size: 18, color: Colors.redAccent.shade100),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Heading to $_destStationName',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // ── End Trip button ──
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      HapticFeedback.heavyImpact();
+                      _toggleTracking();
+                    },
+                    icon: const Icon(Icons.stop_circle_outlined, size: 20),
+                    label: const Text('End Trip'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.redAccent.shade200,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -527,24 +843,25 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
                     isExpanded: true,
                     items: _stations.map((station) {
                       final isDisabled = _metroService.isStationDisabled(station);
-                      return DropdownMenuItem(
-                        value: station,
+                      
+                      // If disabled, setting value to null makes it unselectable natively
+                      final dropdownValue = isDisabled ? null : station;
+
+                      return DropdownMenuItem<String>(
+                        value: dropdownValue,
                         child: isDisabled
-                            ? Tooltip(
-                                message: 'This station is currently out of service',
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        station,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(color: Colors.grey),
-                                      ),
+                            ? Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      '$station (Out of Service)',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: Colors.grey),
                                     ),
-                                    const SizedBox(width: 4),
-                                    const Icon(Icons.info_outline, color: Colors.grey, size: 16),
-                                  ],
-                                ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  const Icon(Icons.info_outline, color: Colors.grey, size: 16),
+                                ],
                               )
                             : Text(
                                 station,
@@ -554,6 +871,8 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
                     }).toList(),
                     onChanged: (selected) {
                       if (selected != null && _metroService.isStationDisabled(selected)) {
+                        // This fallback is kept just in case, but native null value 
+                        // should prevent selection before it even hits this callback.
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(
@@ -687,7 +1006,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
             Expanded(
               child: _buildSummaryCard(
                 icon: Icons.timer,
-                label: 'Time',
+                label: 'Approx. Time',
                 value: '${route.totalTime} mins',
                 color: Colors.orange,
               ),
@@ -696,7 +1015,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
             Expanded(
               child: _buildSummaryCard(
                 icon: Icons.currency_rupee,
-                label: 'Fare',
+                label: 'Total Fare',
                 value: '₹${route.totalFare.toStringAsFixed(0)}',
                 color: Colors.green,
               ),
@@ -845,7 +1164,7 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
     final Color bannerColor = noRoute ? Colors.red : Colors.orange;
     final String message = noRoute
         ? 'Cannot find a route. The following stations are currently out of service:'
-        : 'Showing alternate route. The shortest path is blocked because the following stations are out of service:';
+        : 'Showing alternative route as any of these stations are out of service';
 
     return Container(
       width: double.infinity,
@@ -949,5 +1268,60 @@ class _MetroRouteScreenState extends State<MetroRouteScreen> {
       case 'red':    return const Color(0xFFEF4444);
       default:       return Colors.grey;
     }
+  }
+}
+
+// ─────────── Pulsing dot animation ───────────
+
+class _PulsingDot extends StatefulWidget {
+  final Color color;
+  const _PulsingDot({required this.color});
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+    _opacity = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _opacity,
+      builder: (_, __) => Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: widget.color.withValues(alpha: _opacity.value),
+          boxShadow: [
+            BoxShadow(
+              color: widget.color.withValues(alpha: _opacity.value * 0.5),
+              blurRadius: 6,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -1,8 +1,0 @@
-Station1,Station2,Line,Time,Fare,Lat1,Lon1,Lat2,Lon2
-Kavi Subhash,Satyajit Ray,Orange,4,5,22.4721,88.4061,22.4831,88.4082
-Satyajit Ray,Jyotirindra Nandi,Orange,3,5,22.4831,88.4082,22.4921,88.4101
-Jyotirindra Nandi,Kavi Sukanta,Orange,3,5,22.4921,88.4101,22.5028,88.4121
-Kavi Sukanta,Hemanta Mukhopadhyay,Orange,3,5,22.5028,88.4121,22.5135,88.4141
-Hemanta Mukhopadhyay,VIP Road,Orange,4,10,22.5135,88.4141,22.5932,88.4239
-VIP Road,City Center 2,Orange,3,5,22.5932,88.4239,22.6186,88.4384
-City Center 2,Jai Hind (Airport),Orange,4,5,22.6186,88.4384,22.6418,88.4320

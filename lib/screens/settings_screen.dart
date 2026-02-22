@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_state_provider.dart';
 import '../providers/alarm_settings_provider.dart';
@@ -68,7 +69,10 @@ class SettingsScreen extends StatelessWidget {
                       title: const Text('Enable Sound'),
                       subtitle: const Text('Play audio alarm when near station'),
                       value: alarmSettings.isSoundEnabled,
-                      onChanged: (val) => alarmSettings.setSoundEnabled(val),
+                      onChanged: (val) {
+                        HapticFeedback.selectionClick();
+                        alarmSettings.setSoundEnabled(val);
+                      },
                       activeTrackColor: AppColors.primary,
                     ),
                   ),
@@ -97,7 +101,10 @@ class SettingsScreen extends StatelessWidget {
                           divisions: 10,
                           label: '${(alarmSettings.volume * 100).round()}%',
                           activeColor: AppColors.primary,
-                          onChanged: (val) => alarmSettings.setVolume(val),
+                          onChanged: (val) {
+                            HapticFeedback.selectionClick();
+                            alarmSettings.setVolume(val);
+                          },
                         ),
                       ),
                     ),
@@ -122,8 +129,65 @@ class SettingsScreen extends StatelessWidget {
                       title: const Text('Enable Vibration'),
                       subtitle: const Text('Vibrate when alarm triggers'),
                       value: alarmSettings.isVibrateEnabled,
-                      onChanged: (val) => alarmSettings.setVibrateEnabled(val),
+                      onChanged: (val) {
+                        HapticFeedback.selectionClick();
+                        alarmSettings.setVibrateEnabled(val);
+                      },
                       activeTrackColor: AppColors.primary,
+                    ),
+                  ),
+
+                  // Alarm Threshold
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.05),
+                          blurRadius: 10,
+                        ),
+                      ],
+                    ),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      leading: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.timer, color: AppColors.primary),
+                      ),
+                      title: const Text(
+                        'Alarm Threshold',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        'Alert ${alarmSettings.alarmThresholdMinutes} min before arrival',
+                      ),
+                      trailing: DropdownButtonHideUnderline(
+                        child: DropdownButton<int>(
+                          value: alarmSettings.alarmThresholdMinutes,
+                          icon: const Icon(Icons.arrow_drop_down, color: AppColors.primary),
+                          borderRadius: BorderRadius.circular(12),
+                          items: List.generate(10, (i) => i + 1)
+                              .map((m) => DropdownMenuItem<int>(
+                                    value: m,
+                                    child: Text('$m min'),
+                                  ))
+                              .toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              HapticFeedback.selectionClick();
+                              alarmSettings.setAlarmThreshold(val);
+                            }
+                          },
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -213,6 +277,7 @@ class SettingsScreen extends StatelessWidget {
                 ],
                 onChanged: (ThemeMode? newMode) {
                   if (newMode != null) {
+                    HapticFeedback.selectionClick();
                     appState.setThemeMode(newMode);
                   }
                 },

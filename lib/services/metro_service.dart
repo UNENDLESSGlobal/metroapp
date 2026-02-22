@@ -64,6 +64,11 @@ class MetroService {
   // Full graph including disabled edges (for ideal-path diagnostics)
   final Map<String, List<_Edge>> _fullAdjacencyList = {};
 
+  // Pre-computed operational status for every station.
+  // true = at least one track is active, false = every track is disabled.
+  // Built once during JSON parsing — never mutated afterwards.
+  final Map<String, bool> _stationOperationalStatus = {};
+
   // All unique stations (including disabled ones)
   List<String> _stations = [];
   final Map<String, List<double>> _stationCoordinates = {};
@@ -71,20 +76,16 @@ class MetroService {
   // Maps station name -> its primary line color/name
   final Map<String, String> _stationLineMap = {};
 
-  // Stations that exist in the data but have NO operational connections
-  Set<String> _disabledStations = {};
-
   bool _isLoaded = false;
   bool get isLoaded => _isLoaded;
 
   List<String> getStations() => _stations;
 
-  /// Set of station names that have no operational connections.
-  Set<String> get disabledStations => _disabledStations;
-
-  /// Returns true if the station exists only on non-operational edges.
-  bool isStationDisabled(String stationName) =>
-      _disabledStations.contains(stationName);
+  /// Simple map lookup. Returns true if the station is out of service
+  /// (every single connection on it has Is_Operational == false).
+  bool isStationDisabled(String stationName) {
+    return !(_stationOperationalStatus[stationName] ?? false);
+  }
 
   /// Get the primary metro line name for a station (e.g. 'Blue', 'Green').
   String getStationLine(String stationName) =>
@@ -136,9 +137,9 @@ class MetroService {
   Future<void> _fetchFromApi() async {
     debugPrint('MetroService: Fetching data from API…');
 
-    final response = await http.get(Uri.parse(_kApiUrl)).timeout(
-      const Duration(seconds: 15),
-    );
+    final response = await http
+        .get(Uri.parse(_kApiUrl))
+        .timeout(const Duration(seconds: 15));
 
     if (response.statusCode != 200) {
       throw Exception('API returned HTTP ${response.statusCode}');
@@ -184,37 +185,79 @@ class MetroService {
 
   /// Build the adjacency-list graph from parsed JSON data.
   /// Each entry represents an edge between two stations.
-  /// 
+  ///
   /// Expected JSON fields:
   /// Station1, Station2, Line, Time, Fare, Lat1, Lon1, Lat2, Lon2, Is_Operational
   void _buildGraphFromJson(List<dynamic> data) {
     _adjacencyList.clear();
     _fullAdjacencyList.clear();
+    _stationOperationalStatus.clear();
     _stations.clear();
     _stationCoordinates.clear();
     _stationLineMap.clear();
-    _disabledStations.clear();
     _isLoaded = false;
 
-    // First pass: collect ALL station names from every row (operational or not)
+    // ──── PASS 1: Default every station to FALSE (Out of Service) ────
+    for (final item in data) {
+      if (item is! Map<String, dynamic>) continue;
+      final String st1 = (item['Station1'] ?? item['station1'] ?? '')
+          .toString()
+          .trim();
+      final String st2 = (item['Station2'] ?? item['station2'] ?? '')
+          .toString()
+          .trim();
+      if (st1.isNotEmpty) _stationOperationalStatus[st1] = false;
+      if (st2.isNotEmpty) _stationOperationalStatus[st2] = false;
+    }
+
+    // ──── PASS 2: If a track is operational, mark BOTH stations TRUE ────
+    for (final item in data) {
+      if (item is! Map<String, dynamic>) continue;
+      final String st1 = (item['Station1'] ?? item['station1'] ?? '')
+          .toString()
+          .trim();
+      final String st2 = (item['Station2'] ?? item['station2'] ?? '')
+          .toString()
+          .trim();
+      final bool isTrackActive = _parseBool(
+        item['Is_Operational'] ??
+            item['is_operational'] ??
+            item['IsOperational'] ??
+            true,
+      );
+      if (isTrackActive) {
+        if (st1.isNotEmpty) _stationOperationalStatus[st1] = true;
+        if (st2.isNotEmpty) _stationOperationalStatus[st2] = true;
+      }
+    }
+
+    // ──── PASS 3: Build the graphs and collect metadata ────
     final Set<String> allStationNames = {};
 
     for (final item in data) {
       if (item is! Map<String, dynamic>) continue;
 
-      final String u = (item['Station1'] ?? item['station1'] ?? '').toString().trim();
-      final String v = (item['Station2'] ?? item['station2'] ?? '').toString().trim();
-      final String line = (item['Line'] ?? item['line'] ?? '').toString().trim();
-      final int time = _parseInt(item['Time'] ?? item['time']);
-      final double fare = _parseDouble(item['Fare'] ?? item['fare']);
+      final String u = (item['Station1'] ?? item['station1'] ?? '')
+          .toString()
+          .trim();
+      final String v = (item['Station2'] ?? item['station2'] ?? '')
+          .toString()
+          .trim();
+      final String line = (item['Line'] ?? item['line'] ?? '')
+          .toString()
+          .trim();
+      final int time = _parseInt(
+        item['Time (Minutes)'] ?? item['Time'] ?? item['time'],
+      );
+      final double fare = _parseDouble(
+        item['Fare (INR)'] ?? item['Fare'] ?? item['fare'],
+      );
 
       if (u.isEmpty || v.isEmpty) continue;
 
-      // Track every station name regardless of operational status
       allStationNames.add(u);
       allStationNames.add(v);
 
-      // Map station -> line (first seen line wins)
       _stationLineMap.putIfAbsent(u, () => line);
       _stationLineMap.putIfAbsent(v, () => line);
 
@@ -227,24 +270,23 @@ class MetroService {
       if (lat1 != 0.0 && lon1 != 0.0) _stationCoordinates[u] = [lat1, lon1];
       if (lat2 != 0.0 && lon2 != 0.0) _stationCoordinates[v] = [lat2, lon2];
 
-      // Check Is_Operational flag
       final isOperational = _parseBool(
-        item['Is_Operational'] ?? item['is_operational'] ?? item['IsOperational'] ?? true,
+        item['Is_Operational'] ??
+            item['is_operational'] ??
+            item['IsOperational'] ??
+            true,
       );
 
-      // Always add to FULL adjacency list (for ideal-path diagnostics)
+      // Full adjacency list (for ideal-path diagnostics)
       _addEdgeTo(_fullAdjacencyList, u, v, line, time, fare);
       _addEdgeTo(_fullAdjacencyList, v, u, line, time, fare);
 
-      // Only add operational edges to the main graph
+      // Only add operational edges to the routing graph
       if (!isOperational) continue;
 
       _addEdge(u, v, line, time, fare);
       _addEdge(v, u, line, time, fare);
     }
-
-    // Disabled stations = stations that appear in data but have zero operational edges
-    _disabledStations = allStationNames.difference(_adjacencyList.keys.toSet());
 
     // Include ALL stations (operational + disabled) in the sorted list
     _stations = allStationNames.toList()..sort();
@@ -288,7 +330,14 @@ class MetroService {
     _adjacencyList[u]!.add(_Edge(to: v, line: line, time: time, fare: fare));
   }
 
-  void _addEdgeTo(Map<String, List<_Edge>> graph, String u, String v, String line, int time, double fare) {
+  void _addEdgeTo(
+    Map<String, List<_Edge>> graph,
+    String u,
+    String v,
+    String line,
+    int time,
+    double fare,
+  ) {
     if (!graph.containsKey(u)) graph[u] = [];
     graph[u]!.add(_Edge(to: v, line: line, time: time, fare: fare));
   }
@@ -349,7 +398,15 @@ class MetroService {
       if (neighbors == null) continue;
 
       for (final edge in neighbors) {
-        final int newDist = currentDist + edge.time;
+        int newDist = currentDist + edge.time;
+
+        // Line change penalty
+        if (u != start) {
+          final _Edge? edgeToU = previous[u];
+          if (edgeToU != null && edgeToU.line != edge.line) {
+            newDist += 5;
+          }
+        }
 
         if (newDist < dist[edge.to]!) {
           dist[edge.to] = newDist;
@@ -415,6 +472,7 @@ class MetroService {
       } else if (i > 1) {
         if (segment.line != currentLine) {
           interchanges.add(rawSegments[i - 1].station);
+          totalTime += 5; // 5-minute line change penalty
           currentLine = segment.line;
         }
       }
@@ -440,7 +498,10 @@ class MetroService {
   ///
   /// Returns a list of maps, e.g.:
   /// `[{'station': 'Shyambazar', 'line': 'Blue'}, ...]`
-  List<Map<String, dynamic>> getBlockedStationsOnIdealPath(String start, String end) {
+  List<Map<String, dynamic>> getBlockedStationsOnIdealPath(
+    String start,
+    String end,
+  ) {
     if (!_isLoaded) return [];
     if (!_fullAdjacencyList.containsKey(start) ||
         !_fullAdjacencyList.containsKey(end)) {
@@ -475,7 +536,16 @@ class MetroService {
       if (neighbors == null) continue;
 
       for (final edge in neighbors) {
-        final int newDist = currentDist + edge.time;
+        int newDist = currentDist + edge.time;
+
+        // Line change penalty
+        if (u != start) {
+          final _Edge? edgeToU = previous[u];
+          if (edgeToU != null && edgeToU.line != edge.line) {
+            newDist += 5;
+          }
+        }
+
         if (newDist < dist[edge.to]!) {
           dist[edge.to] = newDist;
           previous[edge.to] = edge;
@@ -505,7 +575,8 @@ class MetroService {
     for (final ie in idealPath) {
       // Check if this edge exists in the operational adjacency list
       final neighbors = _adjacencyList[ie.from];
-      final isOperational = neighbors != null &&
+      final isOperational =
+          neighbors != null &&
           neighbors.any((e) => e.to == ie.to && e.line == ie.line);
 
       if (!isOperational) {

@@ -1,7 +1,0 @@
-Station1,Station2,Line,Time,Fare,Lat1,Lon1,Lat2,Lon2
-Joka,Thakurpukur,Purple,3,5,22.4571,88.3072,22.4682,88.3088
-Thakurpukur,Sakher Bazar,Purple,3,5,22.4682,88.3088,22.4770,88.3101
-Sakher Bazar,Behala Chowrasta,Purple,3,5,22.4770,88.3101,22.4891,88.3118
-Behala Chowrasta,Behala Bazar,Purple,3,5,22.4891,88.3118,22.5034,88.3140
-Behala Bazar,Taratala,Purple,3,5,22.5034,88.3140,22.5135,88.3155
-Taratala,Majerhat,Purple,3,5,22.5135,88.3155,22.5222,88.3188
