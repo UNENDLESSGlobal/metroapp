@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'background_service.dart';
 
 /// UI-facing wrapper around the background service for hybrid tracking.
@@ -58,13 +59,21 @@ class HybridTrackingService {
     required bool vibrateEnabled,
     required double volume,
   }) async {
+    // Request notification permissions for Android 13+
+    await Permission.notification.request();
+
     // Ensure the service is running
     if (await _service.isRunning()) {
       _service.invoke('stopHybridTrip');
       await Future.delayed(const Duration(milliseconds: 500));
     }
 
-    await _service.startService();
+    try {
+      await _service.startService();
+    } catch (e) {
+      debugPrint('HybridTrackingService: Failed to start service: $e');
+      rethrow;
+    }
     // Give the isolate a moment to boot
     await Future.delayed(const Duration(seconds: 1));
 

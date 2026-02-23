@@ -99,3 +99,27 @@
 
 # Background Service (from your AndroidManifest.xml)
 -keep class id.flutter.flutter_background_service.** { *; }
+
+# Geolocator
+-keep class com.baseflow.geolocator.** { *; }
+-dontwarn com.baseflow.geolocator.**
+
+# Flutter Local Notifications
+-keep class com.dexterous.flutterlocalnotifications.** { *; }
+-dontwarn com.dexterous.flutterlocalnotifications.**
+
+# Flutter Ringtone Player
+-keep class io.inway.ringtone.player.** { *; }
+-dontwarn io.inway.ringtone.player.**
+
+# Vibration plugin
+-keep class com.benjaminabel.vibration.** { *; }
+-dontwarn com.benjaminabel.vibration.**
+
+# Permission Handler
+-keep class com.baseflow.permissionhandler.** { *; }
+-dontwarn com.baseflow.permissionhandler.**
+
+# Google Play Services Location (used by Geolocator)
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.android.gms.**

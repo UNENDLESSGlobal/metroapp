@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_background_service/flutter_background_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'metro_service.dart';
 import 'background_service.dart'; // Import the background service file
 
@@ -33,6 +34,9 @@ class TripTrackingService {
 
   /// Start tracking for a specific route
   Future<void> startTracking(MetroRoute route) async {
+    // Request notification permissions for Android 13+
+    await Permission.notification.request();
+
     final targets = _identifyTargets(route);
     
     if (targets.isEmpty) {

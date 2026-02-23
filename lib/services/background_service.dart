@@ -14,8 +14,14 @@ void onStart(ServiceInstance service) async {
   WidgetsFlutterBinding.ensureInitialized();
   DartPluginRegistrant.ensureInitialized();
 
+  try {
   // ── Notification setup ──
   final notifPlugin = FlutterLocalNotificationsPlugin();
+
+  // Initialize the plugin — REQUIRED before any show() call
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const initSettings = InitializationSettings(android: androidInit);
+  await notifPlugin.initialize(initSettings);
 
   const trackingChannel = AndroidNotificationChannel(
     'metro_tracking_channel',
@@ -45,7 +51,7 @@ void onStart(ServiceInstance service) async {
       android: AndroidNotificationDetails(
         'metro_tracking_channel',
         'Metro Tracking',
-        icon: 'ic_bg_service_small',
+        icon: '@mipmap/ic_launcher',
         ongoing: true,
       ),
     ),
@@ -91,7 +97,7 @@ void onStart(ServiceInstance service) async {
         android: AndroidNotificationDetails(
           'metro_tracking_channel',
           'Metro Tracking',
-          icon: 'ic_bg_service_small',
+          icon: '@mipmap/ic_launcher',
           ongoing: true,
         ),
       ),
@@ -165,7 +171,7 @@ void onStart(ServiceInstance service) async {
           android: AndroidNotificationDetails(
             'metro_tracking_channel',
             'Metro Tracking',
-            icon: 'ic_bg_service_small',
+            icon: '@mipmap/ic_launcher',
             ongoing: true,
           ),
         ),
@@ -244,6 +250,11 @@ void onStart(ServiceInstance service) async {
     notifPlugin.cancel(889);
     debugPrint('BG: Alarm stopped');
   });
+
+  } catch (e, st) {
+    debugPrint('BG: FATAL ERROR in onStart: $e');
+    debugPrint('BG: Stack trace: $st');
+  }
 }
 
 // ─────────── Service initializer ───────────
